@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import { authApi, userApi } from '../services/api';
-import { socketService } from '../services/socket';
 
 export interface User {
   id: string;
@@ -60,7 +59,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const { token, user } = response;
       localStorage.setItem('cyberlearn_token', token);
       set({ user, token, isAuthenticated: true, isLoading: false });
-      socketService.connect(token);
     } catch (err: any) {
       set({ error: err.message || 'Login failed', isLoading: false });
       throw err;
@@ -74,7 +72,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const { token, user } = response;
       localStorage.setItem('cyberlearn_token', token);
       set({ user, token, isAuthenticated: true, isLoading: false });
-      socketService.connect(token);
     } catch (err: any) {
       set({ error: err.message || 'Registration failed', isLoading: false });
       throw err;
@@ -83,7 +80,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   logout: () => {
     localStorage.removeItem('cyberlearn_token');
-    socketService.disconnect();
     set({ user: null, token: null, isAuthenticated: false, error: null });
     window.location.href = '/login';
   },
@@ -99,7 +95,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const user = await authApi.getMe();
       set({ user, isAuthenticated: true, isLoading: false });
-      socketService.connect(token);
     } catch (err: any) {
       localStorage.removeItem('cyberlearn_token');
       set({ user: null, token: null, isAuthenticated: false, error: null, isLoading: false });

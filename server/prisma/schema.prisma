@@ -102,7 +102,6 @@ model Attempt {
   userId      String
   role        String
   choice      String
-  parameters  Json?
   outcome     String
   score       Int
   timeTaken   Int
@@ -139,9 +138,10 @@ model Score {
   id               String   @id @default(cuid())
   userId           String
   sessionId        String?
+  role             String   @default("defender")
+  roundNumber      Int?
   totalScore       Int
-  correctConcepts  Int
-  correctDefenses  Int
+  correctChoice    Int
   timeEfficiency   Int
   consistency      Int
   repeatedMistakes Int

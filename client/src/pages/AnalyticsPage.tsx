@@ -1,8 +1,8 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { 
-  Info, Activity, Target, CheckCircle, XCircle, 
-  TrendingUp, Clock, AlertTriangle, Shield, Sword, Award
+  Info, Activity, Target, CheckCircle, XCircle,
+  TrendingUp, Clock, AlertTriangle, Shield, Award
 } from 'lucide-react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
@@ -305,7 +305,7 @@ export const AnalyticsPage: React.FC = () => {
                             ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' 
                             : 'bg-red-500/20 text-red-400 border border-red-500/30'
                         }`}>
-                          {item.role === 'Defender' ? <Shield size={10} className="inline mr-1" /> : <Sword size={10} className="inline mr-1" />}
+                          {item.role === 'Defender' ? <Shield size={10} className="inline mr-1" /> : <Target size={10} className="inline mr-1" />}
                           {item.role}
                         </span>
                       </td>

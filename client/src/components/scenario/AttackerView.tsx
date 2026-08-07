@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Target, Send, Loader2, Info, AlertCircle } from 'lucide-react';
-import { Scenario } from '../../hooks/useScenarioSession';
-import { StrategyCard, ScenarioHeader, ParamsForm, WaitingOverlay } from './ScenarioShared';
+import { Target, Send } from 'lucide-react';
+import type { Scenario } from '../../hooks/useScenarioSession';
+import { StrategyCard, ScenarioHeader, AssessmentGuide, WaitingOverlay } from './ScenarioShared';
 
 interface AttackerViewProps {
   scenario: Scenario;
@@ -12,7 +12,7 @@ interface AttackerViewProps {
   defenderScore: number;
   sessionCode: string | null;
   isWaiting: boolean; // true after submitting
-  onSubmit: (optionId: string, params: Record<string, string>) => void;
+  onSubmit: (optionId: string) => void;
 }
 
 const AttackerView: React.FC<AttackerViewProps> = ({
@@ -26,13 +26,12 @@ const AttackerView: React.FC<AttackerViewProps> = ({
   onSubmit,
 }) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [params, setParams] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState(false);
 
   const handleSubmit = () => {
     if (!selectedId || submitted) return;
     setSubmitted(true);
-    onSubmit(selectedId, params);
+    onSubmit(selectedId);
   };
 
   const selected = scenario.attackOptions.find(o => o.id === selectedId);
@@ -92,20 +91,6 @@ const AttackerView: React.FC<AttackerViewProps> = ({
             </div>
           </div>
 
-          {/* Optional params */}
-          {selectedId && !submitted && !isWaiting && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-            >
-              <h3 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
-                <span className="text-red-500 font-bold">02</span>
-                Configure Parameters
-              </h3>
-              <ParamsForm isAttack={true} params={params} onChange={setParams} />
-            </motion.div>
-          )}
-
           {/* Submit / waiting */}
           <div>
             {isWaiting || submitted ? (
@@ -134,18 +119,7 @@ const AttackerView: React.FC<AttackerViewProps> = ({
 
         {/* Sidebar */}
         <div className="space-y-4">
-          <div className="bg-red-950/20 border border-red-500/20 rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-3 text-red-400">
-              <Info size={14} />
-              <h3 className="text-xs font-bold tracking-widest uppercase">Strategy Guide</h3>
-            </div>
-            <ul className="space-y-2 text-xs text-gray-400 leading-relaxed">
-              <li>• Match your attack to the target system's known vulnerabilities</li>
-              <li>• Consider the category — related attacks score higher</li>
-              <li>• Fill in optional parameters for bonus points</li>
-              <li>• Consistent category choices improve your score over time</li>
-            </ul>
-          </div>
+          <AssessmentGuide role="attacker" />
 
           {selected && (
             <motion.div
@@ -164,8 +138,11 @@ const AttackerView: React.FC<AttackerViewProps> = ({
 
           <div className="bg-[#0a0f1e]/60 border border-[#1e293b] rounded-xl p-4 text-xs space-y-2.5">
             <p className="text-gray-500 uppercase tracking-wider font-medium mb-1">Scoring</p>
-            <div className="flex justify-between text-gray-400"><span>Relevant attack</span><span className="text-green-400">+5 to +30</span></div>
-            <div className="flex justify-between text-gray-400"><span>Parameters filled</span><span className="text-green-400">+5</span></div>
+            <div className="flex justify-between text-gray-400"><span>Breach</span><span className="text-green-400">+30</span></div>
+            <div className="flex justify-between text-gray-400"><span>Partial breach</span><span className="text-green-400">+25</span></div>
+            <div className="flex justify-between text-gray-400"><span>Blocked</span><span className="text-green-400">+5</span></div>
+            <div className="flex justify-between text-gray-400"><span>Fast submission</span><span className="text-green-400">up to +10</span></div>
+            <div className="flex justify-between text-gray-400"><span>Consistency bonus</span><span className="text-green-400">up to +10</span></div>
             <div className="flex justify-between text-gray-400"><span>Repeated mistakes</span><span className="text-red-400">-5 each</span></div>
           </div>
         </div>

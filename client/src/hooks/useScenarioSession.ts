@@ -43,6 +43,14 @@ export interface Scenario {
   defenseOptions: DefenseOption[];
 }
 
+export interface ScoreBreakdown {
+  correctChoice: number;
+  timeEfficiency: number;
+  consistency: number;
+  repeatedMistakes: number;
+  total: number;
+}
+
 export interface RoundResult {
   roundNumber: number;
   totalRounds: number;
@@ -57,25 +65,34 @@ export interface RoundResult {
   defenderRoundScore: number;
   attackerTotalScore: number;
   defenderTotalScore: number;
-  scoreBreakdown: {
-    correctConceptUsage: number;
-    correctDefense: number;
-    timeEfficiency: number;
-    consistency: number;
-    repeatedMistakes: number;
-    total: number;
-  };
+  attackerScoreBreakdown: ScoreBreakdown;
+  defenderScoreBreakdown: ScoreBreakdown;
 }
 
 export interface CategoryStat {
   category: string;
   total: number;
-  defended: number;
+  succeeded: number;
   accuracy: number;
+}
+
+export interface PerformancePoint {
+  round: number;
+  attackerRoundScore: number;
+  defenderRoundScore: number;
+  attackerCumulativeScore: number;
+  defenderCumulativeScore: number;
+}
+
+export interface ReportRecommendation {
+  category: string;
+  title: string;
+  description: string;
 }
 
 export interface AssessmentReport {
   sessionId: string;
+  sessionCode: string;
   attackerName: string;
   defenderName: string;
   totalRounds: number;
@@ -84,10 +101,18 @@ export interface AssessmentReport {
   attackerWins: number;
   defenderWins: number;
   partials: number;
+  attackerAccuracy: number;
   defenderAccuracy: number;
-  categories: CategoryStat[];
-  strongTopics: string[];
-  weakTopics: string[];
+  averageAccuracy: number;
+  attackerCategories: CategoryStat[];
+  defenderCategories: CategoryStat[];
+  attackerStrongTopics: string[];
+  attackerWeakTopics: string[];
+  defenderStrongTopics: string[];
+  defenderWeakTopics: string[];
+  attackerRecommendations: ReportRecommendation[];
+  defenderRecommendations: ReportRecommendation[];
+  performanceTimeline: PerformancePoint[];
   events: any[];
 }
 
@@ -128,6 +153,7 @@ type Action =
   | { type: 'MY_READY' }
   | { type: 'SCENARIO_LOADED'; scenario: Scenario; roundNumber: number; totalRounds: number }
   | { type: 'ATTACK_SUBMITTED'; attackOptionId: string; attackOptionName: string; attackOptionDescription: string; attackCategory: string; attackDifficulty: string }
+  | { type: 'DEFENSE_SUBMITTED' }
   | { type: 'ROUND_RESULT'; result: RoundResult }
   | { type: 'ASSESSMENT_COMPLETE'; report: AssessmentReport }
   | { type: 'RESET' };
@@ -232,6 +258,10 @@ function reducer(state: SessionState, action: Action): SessionState {
               difficulty: action.attackDifficulty,
             },
           };
+    case 'DEFENSE_SUBMITTED':
+      // Both sides move to a "waiting for evaluation" state until the rule
+      // engine finishes and roundCompleted arrives.
+      return { ...state, phase: 'waiting_for_result' };
     case 'ROUND_RESULT':
       return {
         ...state,
@@ -273,7 +303,7 @@ export function useScenarioSession() {
       transports: ['websocket', 'polling'],
     });
 
-    socket.on('session_state', (data: any) => {
+    socket.on('sessionState', (data: any) => {
       const s = stateRef.current;
       let phase: SessionPhase = s.phase;
       if (data.status === 'SESSION_READY' || data.status === 'WAITING_FOR_PARTICIPANT') {
@@ -298,21 +328,20 @@ export function useScenarioSession() {
       });
     });
 
-    socket.on('participant_joined', (data: any) => {
+    socket.on('participantJoined', (data: any) => {
       dispatch({ type: 'PARTNER_JOINED', defenderName: data.defenderName });
     });
 
-    socket.on('partner_connected', (data: any) => {
+    socket.on('partnerConnected', (data: any) => {
       dispatch({ type: 'PARTNER_CONNECTED', role: data.role, userName: data.userName });
     });
 
-    socket.on('ready_update', (data: any) => {
-      const s = stateRef.current;
+    socket.on('participantReady', (data: any) => {
       dispatch({ type: 'READY_UPDATE', attackerReady: data.attackerReady, defenderReady: data.defenderReady });
-      // If both ready, server will emit scenario_loaded soon
+      // If both ready, server will emit scenarioLoaded soon
     });
 
-    socket.on('scenario_loaded', (data: any) => {
+    socket.on('scenarioLoaded', (data: any) => {
       dispatch({
         type: 'SCENARIO_LOADED',
         scenario: data.scenario,
@@ -321,7 +350,7 @@ export function useScenarioSession() {
       });
     });
 
-    socket.on('attack_submitted', (data: any) => {
+    socket.on('attackSubmitted', (data: any) => {
       dispatch({
         type: 'ATTACK_SUBMITTED',
         attackOptionId: data.attackOptionId,
@@ -332,15 +361,24 @@ export function useScenarioSession() {
       });
     });
 
-    socket.on('round_result', (data: any) => {
+    socket.on('defenseSubmitted', () => {
+      dispatch({ type: 'DEFENSE_SUBMITTED' });
+    });
+
+    // ruleProcessed carries a preview of the outcome before roundCompleted's
+    // full payload arrives; no separate UI state needed today, but the
+    // listener is here for parity with the spec's event list.
+    socket.on('ruleProcessed', () => {});
+
+    socket.on('roundCompleted', (data: any) => {
       dispatch({ type: 'ROUND_RESULT', result: data as RoundResult });
     });
 
-    socket.on('assessment_complete', (data: any) => {
+    socket.on('assessmentCompleted', (data: any) => {
       dispatch({ type: 'ASSESSMENT_COMPLETE', report: data.report });
     });
 
-    socket.on('session_error', (data: any) => {
+    socket.on('sessionError', (data: any) => {
       dispatch({ type: 'SET_ERROR', error: data.message ?? 'An error occurred' });
     });
 
@@ -379,7 +417,7 @@ export function useScenarioSession() {
 
       connectSocket();
       setTimeout(() => {
-        socketRef.current?.emit('join_session', { sessionId });
+        socketRef.current?.emit('joinSession', { sessionId });
       }, 300);
     } catch (err: any) {
       dispatch({ type: 'SET_ERROR', error: err.response?.data?.error ?? err.message });
@@ -406,7 +444,7 @@ export function useScenarioSession() {
 
       connectSocket();
       setTimeout(() => {
-        socketRef.current?.emit('join_session', { sessionId });
+        socketRef.current?.emit('joinSession', { sessionId });
       }, 300);
     } catch (err: any) {
       dispatch({ type: 'SET_ERROR', error: err.response?.data?.error ?? err.message });
@@ -417,27 +455,27 @@ export function useScenarioSession() {
     const { sessionId } = stateRef.current;
     if (!sessionId) return;
     dispatch({ type: 'MY_READY' });
-    socketRef.current?.emit('participant_ready', { sessionId });
+    socketRef.current?.emit('markReady', { sessionId });
   }, []);
 
-  const submitAttack = useCallback((attackOptionId: string, parameters: Record<string, string> = {}) => {
+  const submitAttack = useCallback((attackOptionId: string) => {
     const { sessionId } = stateRef.current;
     if (!sessionId) return;
-    socketRef.current?.emit('submit_attack', { sessionId, attackOptionId, parameters });
-    // Phase change will come from 'attack_submitted' event
+    socketRef.current?.emit('submitAttack', { sessionId, attackOptionId });
+    // Phase change will come from 'attackSubmitted' event
   }, []);
 
-  const submitDefense = useCallback((defenseOptionId: string, parameters: Record<string, string> = {}) => {
+  const submitDefense = useCallback((defenseOptionId: string) => {
     const { sessionId } = stateRef.current;
     if (!sessionId) return;
     dispatch({ type: 'SESSION_STATE', data: { phase: 'waiting_for_result' } });
-    socketRef.current?.emit('submit_defense', { sessionId, defenseOptionId, parameters });
+    socketRef.current?.emit('submitDefense', { sessionId, defenseOptionId });
   }, []);
 
   const continueToNextRound = useCallback(() => {
     const { sessionId } = stateRef.current;
     if (!sessionId) return;
-    socketRef.current?.emit('next_round', { sessionId });
+    socketRef.current?.emit('nextRound', { sessionId });
   }, []);
 
   const reset = useCallback(() => {

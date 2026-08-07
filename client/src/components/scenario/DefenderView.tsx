@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Shield, Send, Info, AlertTriangle, Loader2 } from 'lucide-react';
-import { Scenario } from '../../hooks/useScenarioSession';
-import { StrategyCard, ScenarioHeader, ParamsForm, WaitingOverlay } from './ScenarioShared';
+import { Shield, Send, AlertTriangle } from 'lucide-react';
+import type { Scenario } from '../../hooks/useScenarioSession';
+import { StrategyCard, ScenarioHeader, AssessmentGuide, WaitingOverlay } from './ScenarioShared';
 
 interface IncomingAttack {
   id: string;
@@ -21,7 +21,7 @@ interface DefenderViewProps {
   sessionCode: string | null;
   incomingAttack: IncomingAttack | null;  // null means attack not submitted yet
   isWaiting: boolean;                      // true after submitting defense
-  onSubmit: (optionId: string, params: Record<string, string>) => void;
+  onSubmit: (optionId: string) => void;
 }
 
 const DefenderView: React.FC<DefenderViewProps> = ({
@@ -36,13 +36,12 @@ const DefenderView: React.FC<DefenderViewProps> = ({
   onSubmit,
 }) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [params, setParams] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState(false);
 
   const handleSubmit = () => {
     if (!selectedId || submitted) return;
     setSubmitted(true);
-    onSubmit(selectedId, params);
+    onSubmit(selectedId);
   };
 
   const selected = scenario.defenseOptions.find(o => o.id === selectedId);
@@ -149,20 +148,6 @@ const DefenderView: React.FC<DefenderViewProps> = ({
             </div>
           </div>
 
-          {/* Optional params */}
-          {selectedId && canInteract && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-            >
-              <h3 className="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
-                <span className="text-teal-500 font-bold">02</span>
-                Configure Defense
-              </h3>
-              <ParamsForm isAttack={false} params={params} onChange={setParams} />
-            </motion.div>
-          )}
-
           {/* Submit / waiting */}
           <div>
             {isWaiting || submitted ? (
@@ -191,18 +176,7 @@ const DefenderView: React.FC<DefenderViewProps> = ({
 
         {/* Sidebar */}
         <div className="space-y-4">
-          <div className="bg-teal-950/20 border border-teal-500/20 rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-3 text-teal-400">
-              <Info size={14} />
-              <h3 className="text-xs font-bold tracking-widest uppercase">Defense Guide</h3>
-            </div>
-            <ul className="space-y-2 text-xs text-gray-400 leading-relaxed">
-              <li>• Match your defense to the category of the incoming attack</li>
-              <li>• A directly relevant control scores highest</li>
-              <li>• Add configuration notes for bonus points</li>
-              <li>• Consistent correct defenses build your accuracy score</li>
-            </ul>
-          </div>
+          <AssessmentGuide role="defender" />
 
           {selected && (
             <motion.div
@@ -221,9 +195,11 @@ const DefenderView: React.FC<DefenderViewProps> = ({
 
           <div className="bg-[#0a0f1e]/60 border border-[#1e293b] rounded-xl p-4 text-xs space-y-2.5">
             <p className="text-gray-500 uppercase tracking-wider font-medium mb-1">Scoring</p>
-            <div className="flex justify-between text-gray-400"><span>Correct concept</span><span className="text-green-400">+20</span></div>
             <div className="flex justify-between text-gray-400"><span>Full block</span><span className="text-green-400">+30</span></div>
-            <div className="flex justify-between text-gray-400"><span>Partial block</span><span className="text-green-400">+15</span></div>
+            <div className="flex justify-between text-gray-400"><span>Partial block</span><span className="text-green-400">+25</span></div>
+            <div className="flex justify-between text-gray-400"><span>Breached</span><span className="text-green-400">+0</span></div>
+            <div className="flex justify-between text-gray-400"><span>Fast submission</span><span className="text-green-400">up to +10</span></div>
+            <div className="flex justify-between text-gray-400"><span>Consistency bonus</span><span className="text-green-400">up to +10</span></div>
             <div className="flex justify-between text-gray-400"><span>Repeated mistake</span><span className="text-red-400">-5 each</span></div>
           </div>
         </div>

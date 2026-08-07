@@ -58,19 +58,6 @@ export const userApi = {
   deleteAccount: (password: string) => unwrap<any>(apiClient.delete('/users/me', { data: { password } })),
 };
 
-// --- Sessions API ---
-export const sessionApi = {
-  create: (data: { totalScenarios?: number }) => unwrap<any>(apiClient.post('/sessions', data)),
-  getById: (id: string) => unwrap<any>(apiClient.get(`/sessions/${id}`)),
-  getActive: () => unwrap<any>(apiClient.get('/sessions/active')),
-};
-
-// --- Scenarios API ---
-export const scenarioApi = {
-  getAll: (category?: string) => unwrap<any>(apiClient.get(`/scenarios${category ? `?category=${category}` : ''}`)),
-  getById: (id: string) => unwrap<any>(apiClient.get(`/scenarios/${id}`)),
-};
-
 // --- Analytics API ---
 export const analyticsApi = {
   get: () => unwrap<any>(apiClient.get('/analytics')),
@@ -90,6 +77,12 @@ export const recommendationApi = {
 export const moduleApi = {
   getAll: () => unwrap<any>(apiClient.get('/modules')),
   getById: (id: string) => unwrap<any>(apiClient.get(`/modules/${id}`)),
+};
+
+// --- Labs API ---
+export const labsApi = {
+  chat: (message: string, history: { role: 'user' | 'assistant'; content: string }[]) =>
+    unwrap<{ reply: string }>(apiClient.post('/labs/chat', { message, history })),
 };
 
 export { apiClient };

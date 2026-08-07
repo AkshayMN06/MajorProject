@@ -1,15 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Terminal, Target, Shield, Plus, LogIn,
   ChevronDown, Loader2, X, AlertCircle
 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
+import { apiClient } from '../../services/api';
 
 // ─── Create Session Modal ─────────────────────────────────────────────────────
 interface CreateModalProps {
   onClose: () => void;
-  onCreate: (opts: { difficulty: string; totalScenarios: number }) => void;
+  onCreate: (opts: { difficulty: string; totalScenarios: number; module: string }) => void;
   isLoading: boolean;
   error: string | null;
 }
@@ -19,10 +20,18 @@ export const CreateSessionModal: React.FC<CreateModalProps> = ({
 }) => {
   const [difficulty, setDifficulty] = useState('Medium');
   const [rounds, setRounds] = useState(5);
+  const [module, setModule] = useState('All Modules');
+  const [categories, setCategories] = useState<string[]>([]);
+
+  useEffect(() => {
+    apiClient.get('/scenarios/categories')
+      .then((res) => setCategories(res.data.data ?? []))
+      .catch(() => setCategories([]));
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onCreate({ difficulty, totalScenarios: rounds });
+    onCreate({ difficulty, totalScenarios: rounds, module });
   };
 
   const inputClass = 'w-full bg-[#0a0f1e] border border-gray-700 rounded-lg py-2.5 px-4 text-white text-sm focus:outline-none focus:border-indigo-500 transition-colors';
@@ -65,6 +74,23 @@ export const CreateSessionModal: React.FC<CreateModalProps> = ({
         )}
 
         <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label className="block text-xs text-gray-400 mb-2 font-medium">Assessment Module</label>
+            <div className="relative">
+              <select
+                value={module}
+                onChange={e => setModule(e.target.value)}
+                className="w-full appearance-none bg-[#0a0f1e] border border-gray-700 rounded-lg py-2.5 pl-4 pr-9 text-white text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+              >
+                <option value="All Modules">All Modules</option>
+                {categories.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+            </div>
+          </div>
+
           <div>
             <label className="block text-xs text-gray-400 mb-2 font-medium">Difficulty</label>
             <div className="grid grid-cols-3 gap-2">
@@ -308,7 +334,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onCreateClick, onJoinC
           className="bg-[#0f1629]/60 border border-[#1e293b] rounded-2xl p-5 grid grid-cols-3 gap-4 text-center"
         >
           {[
-            { label: 'Real Scenarios', desc: '15 categories' },
+            { label: 'Real Scenarios', desc: '150 across 5 modules' },
             { label: 'Live Scoring', desc: 'Rule-based engine' },
             { label: 'Full Report', desc: 'After all rounds' },
           ].map(item => (

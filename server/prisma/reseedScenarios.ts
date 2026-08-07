@@ -4,10 +4,19 @@ import { SCENARIOS } from './scenarioData';
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('Starting seed...');
+  console.log(`Reseeding ${SCENARIOS.length} scenarios...`);
 
-  // Scenario Assessment content library: 5 modules x 3 difficulties x 10
-  // scenarios each, defined in scenarioData.ts.
+  // Clear assessment-related tables (dependent -> independent order) so the
+  // new scenario library can be inserted without FK conflicts. Users,
+  // Modules, and Lessons (Practice Labs content) are left untouched.
+  await prisma.score.deleteMany();
+  await prisma.event.deleteMany();
+  await prisma.attempt.deleteMany();
+  await prisma.analytics.deleteMany();
+  await prisma.session.deleteMany();
+  await prisma.rule.deleteMany();
+  await prisma.scenario.deleteMany();
+
   for (const sData of SCENARIOS) {
     const scenario = await prisma.scenario.create({
       data: {
@@ -19,19 +28,16 @@ async function main() {
         context: sData.context,
         attackOptions: sData.attackOptions as any,
         defenseOptions: sData.defenseOptions as any,
-      }
+      },
     });
 
     const rulesData = [];
-    
-    // Generate rules mapping attacks to defenses
     for (const attack of sData.attackOptions) {
       for (const defense of sData.defenseOptions) {
         let outcome = 'breached';
         let explanation = 'The defense was completely ineffective against this attack.';
         let scoreModifier = -10;
 
-        // Simple matching logic for the seed
         if (attack.id === 'a1' && defense.id === 'd1') {
           outcome = 'defended';
           explanation = 'The primary defense perfectly countered the primary attack method.';
@@ -43,10 +49,6 @@ async function main() {
         } else if (attack.id === 'a3' && defense.id === 'd3') {
           outcome = 'defended';
           explanation = 'Properly configured security settings neutralized the threat.';
-          scoreModifier = 20;
-        } else if (attack.id === 'a4' && defense.id === 'd4') {
-          outcome = 'defended';
-          explanation = 'Advanced monitoring and response capabilities stopped the attack chain.';
           scoreModifier = 20;
         } else if (attack.category === defense.category) {
           outcome = 'partially_defended';
@@ -60,45 +62,19 @@ async function main() {
           defenseType: defense.id,
           outcome,
           explanation,
-          scoreModifier
+          scoreModifier,
         });
       }
     }
 
-    await prisma.rule.createMany({
-      data: rulesData
-    });
+    await prisma.rule.createMany({ data: rulesData });
   }
 
-  // Modules
-  for (let i = 1; i <= 8; i++) {
-    const module = await prisma.module.create({
-      data: {
-        name: `Cyber Security Module ${i}`,
-        description: `Learn core concepts for topic ${i}.`,
-        category: 'General',
-        difficulty: 'Medium',
-        duration: 120,
-        type: 'theory',
-        content: {},
-        order: i,
-      }
-    });
-
-    await prisma.lesson.createMany({
-      data: [
-        { moduleId: module.id, title: `Lesson 1 for Module ${i}`, content: 'Content 1', type: 'theory', order: 1 },
-        { moduleId: module.id, title: `Lesson 2 for Module ${i}`, content: 'Content 2', type: 'interactive', order: 2 },
-        { moduleId: module.id, title: `Lesson 3 for Module ${i}`, content: 'Content 3', type: 'quiz', order: 3 },
-      ]
-    });
-  }
-
-  console.log('Seed completed successfully.');
+  console.log('Scenario reseed completed successfully.');
 }
 
 main()
-  .catch(e => {
+  .catch((e) => {
     console.error(e);
     process.exit(1);
   })

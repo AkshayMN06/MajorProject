@@ -1,7 +1,12 @@
 import { Router, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authenticate, AuthRequest } from '../middleware/auth';
+import { validate } from '../middleware/validate';
+import { createSessionSchema, joinSessionSchema, readySchema } from '../validation/sessionSchemas';
 import { getIO } from '../socket';
+import { markReady } from '../services/sessionActions';
+import { buildAssessmentReport } from '../services/reportBuilder';
+import { transition, SessionState } from '../services/stateMachine';
 
 const prisma = new PrismaClient();
 const router = Router();
@@ -22,39 +27,43 @@ const generateSessionCode = async (): Promise<string> => {
 };
 
 // POST /api/sessions/create
-router.post('/create', async (req: AuthRequest, res: Response) => {
+router.post('/create', validate(createSessionSchema), async (req: AuthRequest, res: Response) => {
   try {
-    const { difficulty = 'Medium', totalScenarios = 5, module: moduleName } = req.body;
+    const { difficulty = 'Medium', totalScenarios = 5, module: moduleCategory } = req.body;
 
-    // Select random scenarios matching difficulty
     const allScenarios = await prisma.scenario.findMany({
-      where: difficulty !== 'All' ? { difficulty } : undefined,
+      where: {
+        ...(difficulty !== 'All' ? { difficulty } : {}),
+        ...(moduleCategory && moduleCategory !== 'All Modules' ? { category: moduleCategory } : {}),
+      },
     });
 
     if (allScenarios.length === 0) {
-      return res.status(400).json({ success: false, error: 'No scenarios found for the selected difficulty' });
+      return res.status(400).json({ success: false, error: 'No scenarios found for the selected module/difficulty' });
     }
 
-    // Shuffle and pick N
     const shuffled = allScenarios.sort(() => Math.random() - 0.5);
     const selected = shuffled.slice(0, Math.min(totalScenarios, shuffled.length));
     const scenarioIds = selected.map((s) => s.id);
     const actualTotal = scenarioIds.length;
 
     const sessionCode = await generateSessionCode();
+    const initialStatus = transition(SessionState.START, SessionState.WAITING_FOR_PARTICIPANT);
 
     const session = await prisma.session.create({
       data: {
         sessionCode,
         attackerId: req.user.id,
-        status: 'WAITING_FOR_PARTICIPANT',
+        status: initialStatus,
         difficulty,
-        module: moduleName ?? null,
+        module: moduleCategory ?? null,
         totalScenarios: actualTotal,
         scenarioIds,
       },
     });
 
+    // sessionCreated is delivered synchronously over REST (the creator isn't
+    // in a socket room yet — no defender exists to notify).
     res.status(201).json({
       success: true,
       data: {
@@ -62,6 +71,7 @@ router.post('/create', async (req: AuthRequest, res: Response) => {
         sessionCode: session.sessionCode,
         status: session.status,
         difficulty: session.difficulty,
+        module: session.module,
         totalScenarios: session.totalScenarios,
       },
     });
@@ -71,10 +81,9 @@ router.post('/create', async (req: AuthRequest, res: Response) => {
 });
 
 // POST /api/sessions/join
-router.post('/join', async (req: AuthRequest, res: Response) => {
+router.post('/join', validate(joinSessionSchema), async (req: AuthRequest, res: Response) => {
   try {
     const { sessionCode } = req.body;
-    if (!sessionCode) return res.status(400).json({ success: false, error: 'Session code is required' });
 
     const session = await prisma.session.findUnique({
       where: { sessionCode: sessionCode.toUpperCase() },
@@ -82,7 +91,7 @@ router.post('/join', async (req: AuthRequest, res: Response) => {
     });
 
     if (!session) return res.status(404).json({ success: false, error: 'Session not found. Check the code and try again.' });
-    if (session.status !== 'WAITING_FOR_PARTICIPANT') {
+    if (session.status !== SessionState.WAITING_FOR_PARTICIPANT) {
       return res.status(400).json({ success: false, error: 'This session is no longer accepting participants.' });
     }
     if (session.attackerId === req.user.id) {
@@ -92,20 +101,21 @@ router.post('/join', async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ success: false, error: 'This session already has a defender.' });
     }
 
+    const nextStatus = transition(session.status, SessionState.SESSION_READY);
+
     const updated = await prisma.session.update({
       where: { id: session.id },
-      data: { defenderId: req.user.id, status: 'SESSION_READY' },
+      data: { defenderId: req.user.id, status: nextStatus },
       include: { attacker: true, defender: true },
     });
 
-    // Notify attacker via socket
     try {
       const io = getIO();
       if (io) {
-        io.to(session.id).emit('participant_joined', {
+        io.to(session.id).emit('participantJoined', {
           sessionId: session.id,
           defenderName: req.user.name,
-          status: 'SESSION_READY',
+          status: nextStatus,
         });
       }
     } catch { /* socket may not be ready */ }
@@ -127,13 +137,31 @@ router.post('/join', async (req: AuthRequest, res: Response) => {
   }
 });
 
+// POST /api/sessions/ready
+router.post('/ready', validate(readySchema), async (req: AuthRequest, res: Response) => {
+  try {
+    const { sessionId } = req.body;
+    const { attackerReady, defenderReady, startedRound } = await markReady(sessionId, req.user.id);
+
+    const io = getIO();
+    if (io) {
+      io.to(sessionId).emit('participantReady', { attackerReady, defenderReady });
+      if (startedRound) io.to(sessionId).emit('scenarioLoaded', startedRound);
+    }
+
+    res.json({ success: true, data: { attackerReady, defenderReady, startedRound } });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
 // GET /api/sessions/active
 router.get('/active', async (req: AuthRequest, res: Response) => {
   try {
     const sessions = await prisma.session.findMany({
       where: {
         OR: [{ attackerId: req.user.id }, { defenderId: req.user.id }],
-        status: { not: 'SESSION_COMPLETE' },
+        status: { not: SessionState.ASSESSMENT_COMPLETE },
       },
     });
     res.json({ success: true, data: sessions });
@@ -156,38 +184,12 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
   }
 });
 
-// GET /api/sessions/:id/report
+// GET /api/sessions/:id/report — alias of GET /api/assessment-report/:sessionId
 router.get('/:id/report', async (req: AuthRequest, res: Response) => {
   try {
-    const session = await prisma.session.findUnique({
-      where: { id: req.params.id },
-      include: { attacker: true, defender: true, events: { orderBy: { turnId: 'asc' } } },
-    });
-    if (!session) return res.status(404).json({ success: false, error: 'Session not found' });
-
-    const events = session.events;
-    const totalRounds = events.length;
-    const defenderWins = events.filter((e) => e.outcome === 'defended').length;
-    const attackerWins = events.filter((e) => e.outcome === 'breached').length;
-    const partials = events.filter((e) => e.outcome === 'partially_defended').length;
-
-    res.json({
-      success: true,
-      data: {
-        sessionId: session.id,
-        sessionCode: session.sessionCode,
-        attackerName: session.attacker.name,
-        defenderName: session.defender?.name ?? 'Unknown',
-        totalRounds,
-        attackerFinalScore: session.attackerScore,
-        defenderFinalScore: session.defenderScore,
-        attackerWins,
-        defenderWins,
-        partials,
-        defenderAccuracy: totalRounds > 0 ? Math.round((defenderWins / totalRounds) * 100) : 0,
-        events,
-      },
-    });
+    const report = await buildAssessmentReport(req.params.id);
+    if (!report) return res.status(404).json({ success: false, error: 'Session not found' });
+    res.json({ success: true, data: report });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

@@ -45,7 +45,7 @@ export const ScenarioPage: React.FC = () => {
 
   const { phase, role, scenario } = state;
 
-  const handleCreate = async (opts: { difficulty: string; totalScenarios: number }) => {
+  const handleCreate = async (opts: { difficulty: string; totalScenarios: number; module: string }) => {
     await createSession(opts);
     setShowCreate(false);
   };

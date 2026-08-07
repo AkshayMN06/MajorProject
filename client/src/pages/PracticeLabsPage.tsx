@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Sword, ShieldCheck, Sparkles, Filter, ChevronDown, CheckCircle, Activity, Lightbulb } from 'lucide-react';
+import { Target, ShieldCheck, Sparkles, Filter, ChevronDown, CheckCircle, Activity, Lightbulb } from 'lucide-react';
 import { LabCard } from '../components/labs/LabCard';
 import type { LabCardProps } from '../components/labs/LabCard';
 import { AIChatPanel } from '../components/labs/AIChatPanel';
@@ -98,7 +98,7 @@ export const PracticeLabsPage: React.FC = () => {
                 >
                   <div className="absolute top-0 right-0 w-32 h-32 bg-red-500/10 rounded-full blur-2xl group-hover:bg-red-500/20 transition-all"></div>
                   <div className="p-3 bg-red-500/20 text-red-400 rounded-lg w-fit mb-4">
-                    <Sword size={28} />
+                    <Target size={28} />
                   </div>
                   <h3 className="text-xl font-bold text-white mb-2">ATTACK MODE</h3>
                   <p className="text-gray-400 text-sm mb-6">Learn offensive techniques. Execute attacks in a safe environment and understand how they work.</p>

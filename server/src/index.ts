@@ -12,9 +12,11 @@ import authRoutes from './routes/auth.routes';
 import userRoutes from './routes/user.routes';
 import sessionRoutes from './routes/session.routes';
 import scenarioRoutes from './routes/scenario.routes';
+import actionRoutes from './routes/action.routes';
 import analyticsRoutes from './routes/analytics.routes';
 import recommendationsRoutes from './routes/recommendations.routes';
 import modulesRoutes from './routes/modules.routes';
+import labsRoutes from './routes/labs.routes';
 
 const app = express();
 const httpServer = createServer(app);
@@ -33,9 +35,11 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/sessions', sessionRoutes);
 app.use('/api/scenarios', scenarioRoutes);
+app.use('/api', actionRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/recommendations', recommendationsRoutes);
 app.use('/api/modules', modulesRoutes);
+app.use('/api/labs', labsRoutes);
 
 // Global Error Handler
 app.use(errorHandler);

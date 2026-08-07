@@ -1,0 +1,18 @@
+node_modules/
+.env
+.env.*
+!.env.example
+
+# Prisma local database
+server/prisma/*.db
+server/prisma/*.db-*
+
+# Temporary/generated Prisma files
+server/node_modules/
+
+# Claude/local AI files
+.claude/
+
+# Build files
+dist/
+build/

@@ -19,14 +19,21 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   }
 });
 
+// GET /api/scenarios/categories — distinct scenario categories, used as
+// the "Assessment Module" picker on session creation.
+router.get('/categories', async (req: AuthRequest, res: Response) => {
+  try {
+    const scenarios = await prisma.scenario.findMany({ select: { category: true }, distinct: ['category'] });
+    res.json({ success: true, data: scenarios.map((s) => s.category).sort() });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 router.get('/:id', async (req: AuthRequest, res: Response) => {
   try {
     const scenario = await prisma.scenario.findUnique({
       where: { id: req.params.id },
-      include: {
-        attackOptions: true,
-        defenseOptions: true,
-      }
     });
     if (!scenario) return res.status(404).json({ success: false, error: 'Scenario not found' });
     res.json({ success: true, data: scenario });

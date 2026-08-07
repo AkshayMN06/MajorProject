@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { Target, Shield, ArrowRight, BookOpen, ChevronRight } from 'lucide-react';
-import { RoundResult as RoundResultType } from '../../hooks/useScenarioSession';
+import type { RoundResult as RoundResultType } from '../../hooks/useScenarioSession';
 import { OutcomeBadge, RoundProgress } from './ScenarioShared';
 
 interface ResultPanelProps {
@@ -109,44 +109,37 @@ const ResultPanel: React.FC<ResultPanelProps> = ({ result, role, onContinue }) =
           </div>
         </div>
 
-        {/* Score breakdown (defender detail) */}
-        {result.scoreBreakdown && (
-          <div className="bg-[#0a0f1e]/40 border border-[#1e293b] rounded-xl p-4 mb-6">
-            <p className="text-xs text-gray-500 uppercase tracking-wider mb-3">Score Breakdown</p>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
-              <div className="flex justify-between text-gray-400">
-                <span>Correct Concept</span>
-                <span className={result.scoreBreakdown.correctConceptUsage > 0 ? 'text-green-400' : 'text-gray-600'}>
-                  +{result.scoreBreakdown.correctConceptUsage}
-                </span>
-              </div>
-              <div className="flex justify-between text-gray-400">
-                <span>Defense Quality</span>
-                <span className={result.scoreBreakdown.correctDefense > 0 ? 'text-green-400' : 'text-gray-600'}>
-                  +{result.scoreBreakdown.correctDefense}
-                </span>
-              </div>
-              <div className="flex justify-between text-gray-400">
-                <span>Time Efficiency</span>
-                <span className={result.scoreBreakdown.timeEfficiency > 0 ? 'text-green-400' : 'text-gray-600'}>
-                  +{result.scoreBreakdown.timeEfficiency}
-                </span>
-              </div>
-              <div className="flex justify-between text-gray-400">
-                <span>Consistency</span>
-                <span className={result.scoreBreakdown.consistency > 0 ? 'text-green-400' : 'text-gray-600'}>
-                  +{result.scoreBreakdown.consistency}
-                </span>
-              </div>
-              {result.scoreBreakdown.repeatedMistakes > 0 && (
-                <div className="flex justify-between text-gray-400 col-span-2">
-                  <span>Repeated Mistakes</span>
-                  <span className="text-red-400">-{result.scoreBreakdown.repeatedMistakes}</span>
+        {/* Score breakdown — both sides */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          {[
+            { label: 'Attacker Breakdown', accent: 'text-red-400', breakdown: result.attackerScoreBreakdown },
+            { label: 'Defender Breakdown', accent: 'text-teal-400', breakdown: result.defenderScoreBreakdown },
+          ].map(({ label, accent, breakdown }) => (
+            <div key={label} className="bg-[#0a0f1e]/40 border border-[#1e293b] rounded-xl p-4">
+              <p className={`text-xs font-bold uppercase tracking-wider mb-3 ${accent}`}>{label}</p>
+              <div className="space-y-1.5 text-xs">
+                <div className="flex justify-between text-gray-400">
+                  <span>Correct Choice</span>
+                  <span className={breakdown.correctChoice > 0 ? 'text-green-400' : 'text-gray-600'}>+{breakdown.correctChoice}</span>
                 </div>
-              )}
+                <div className="flex justify-between text-gray-400">
+                  <span>Time Efficiency</span>
+                  <span className={breakdown.timeEfficiency > 0 ? 'text-green-400' : 'text-gray-600'}>+{breakdown.timeEfficiency}</span>
+                </div>
+                <div className="flex justify-between text-gray-400">
+                  <span>Consistency</span>
+                  <span className={breakdown.consistency > 0 ? 'text-green-400' : 'text-gray-600'}>+{breakdown.consistency}</span>
+                </div>
+                {breakdown.repeatedMistakes > 0 && (
+                  <div className="flex justify-between text-gray-400">
+                    <span>Repeated Mistakes</span>
+                    <span className="text-red-400">-{breakdown.repeatedMistakes}</span>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          ))}
+        </div>
 
         {/* Continue */}
         <motion.button

@@ -2,9 +2,10 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import {
   Trophy, Target, Shield, BarChart2, TrendingUp, TrendingDown,
-  BookOpen, Download, RefreshCw, CheckCircle, XCircle, MinusCircle
+  BookOpen, Download, RefreshCw, CheckCircle, XCircle, MinusCircle, Lightbulb
 } from 'lucide-react';
-import { AssessmentReport as ReportType } from '../../hooks/useScenarioSession';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import type { AssessmentReport as ReportType } from '../../hooks/useScenarioSession';
 
 interface AssessmentReportProps {
   report: ReportType;
@@ -30,21 +31,45 @@ const AssessmentReport: React.FC<AssessmentReportProps> = ({ report, role, onRes
       'SCORES',
       `Attacker Final Score: ${report.attackerFinalScore}`,
       `Defender Final Score: ${report.defenderFinalScore}`,
+      `Attacker Accuracy: ${report.attackerAccuracy}%`,
       `Defender Accuracy: ${report.defenderAccuracy}%`,
+      `Average Accuracy: ${report.averageAccuracy}%`,
       '',
       'OUTCOMES',
       `Defended (Defender wins): ${report.defenderWins}`,
       `Breached (Attacker wins): ${report.attackerWins}`,
       `Partial: ${report.partials}`,
       '',
-      'STRONG TOPICS',
-      report.strongTopics.length > 0 ? report.strongTopics.join(', ') : 'None identified',
+      'ATTACKER — STRONG TOPICS',
+      report.attackerStrongTopics.length > 0 ? report.attackerStrongTopics.join(', ') : 'None identified',
+      'ATTACKER — WEAK TOPICS',
+      report.attackerWeakTopics.length > 0 ? report.attackerWeakTopics.join(', ') : 'None identified',
       '',
-      'WEAK TOPICS',
-      report.weakTopics.length > 0 ? report.weakTopics.join(', ') : 'None identified',
+      'DEFENDER — STRONG TOPICS',
+      report.defenderStrongTopics.length > 0 ? report.defenderStrongTopics.join(', ') : 'None identified',
+      'DEFENDER — WEAK TOPICS',
+      report.defenderWeakTopics.length > 0 ? report.defenderWeakTopics.join(', ') : 'None identified',
       '',
-      'CATEGORY BREAKDOWN',
-      ...report.categories.map(c => `  ${c.category}: ${c.accuracy}% (${c.defended}/${c.total})`),
+      'ATTACKER CATEGORY BREAKDOWN',
+      ...report.attackerCategories.map(c => `  ${c.category}: ${c.accuracy}% (${c.succeeded}/${c.total} successful attacks)`),
+      '',
+      'DEFENDER CATEGORY BREAKDOWN',
+      ...report.defenderCategories.map(c => `  ${c.category}: ${c.accuracy}% (${c.succeeded}/${c.total} successful defenses)`),
+      '',
+      'ATTACKER RECOMMENDATIONS',
+      ...(report.attackerRecommendations.length > 0
+        ? report.attackerRecommendations.map(r => `  ${r.title}: ${r.description}`)
+        : ['  None']),
+      '',
+      'DEFENDER RECOMMENDATIONS',
+      ...(report.defenderRecommendations.length > 0
+        ? report.defenderRecommendations.map(r => `  ${r.title}: ${r.description}`)
+        : ['  None']),
+      '',
+      'PERFORMANCE TIMELINE',
+      ...report.performanceTimeline.map(p =>
+        `  Round ${p.round}: Attacker +${p.attackerRoundScore} (total ${p.attackerCumulativeScore}) | Defender +${p.defenderRoundScore} (total ${p.defenderCumulativeScore})`
+      ),
     ];
 
     const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
@@ -142,41 +167,79 @@ const AssessmentReport: React.FC<AssessmentReportProps> = ({ report, role, onRes
           </div>
         </motion.div>
 
-        {/* Defender accuracy */}
-        {role === 'defender' && (
-          <motion.div variants={itemVariants} className="bg-[#0a0f1e] border border-[#1e293b] rounded-2xl p-6">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <BarChart2 size={16} className="text-blue-400" />
-                <span className="text-sm font-semibold text-white">Defense Accuracy</span>
-              </div>
-              <span className="text-2xl font-bold text-white">{report.defenderAccuracy}%</span>
+        {/* Accuracy */}
+        <motion.div variants={itemVariants} className="bg-[#0a0f1e] border border-[#1e293b] rounded-2xl p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <BarChart2 size={16} className="text-blue-400" />
+              <span className="text-sm font-semibold text-white">Average Accuracy</span>
             </div>
-            <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
-              <motion.div
-                className="h-full bg-gradient-to-r from-teal-500 to-emerald-500 rounded-full"
-                initial={{ width: 0 }}
-                animate={{ width: `${report.defenderAccuracy}%` }}
-                transition={{ duration: 0.8, delay: 0.3 }}
-              />
+            <span className="text-2xl font-bold text-white">{report.averageAccuracy}%</span>
+          </div>
+          {[
+            { label: 'Attacker Accuracy', value: report.attackerAccuracy, from: 'from-red-500', to: 'to-rose-500' },
+            { label: 'Defender Accuracy', value: report.defenderAccuracy, from: 'from-teal-500', to: 'to-emerald-500' },
+          ].map(({ label, value, from, to }) => (
+            <div key={label}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs text-gray-400">{label}</span>
+                <span className="text-xs font-semibold text-white">{value}%</span>
+              </div>
+              <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                <motion.div
+                  className={`h-full bg-gradient-to-r ${from} ${to} rounded-full`}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${value}%` }}
+                  transition={{ duration: 0.8, delay: 0.3 }}
+                />
+              </div>
+            </div>
+          ))}
+        </motion.div>
+
+        {/* Performance timeline */}
+        {report.performanceTimeline.length > 0 && (
+          <motion.div variants={itemVariants} className="bg-[#0a0f1e] border border-[#1e293b] rounded-2xl p-6">
+            <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+              <TrendingUp size={15} className="text-indigo-400" />
+              Performance Timeline
+            </h3>
+            <div className="h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={report.performanceTimeline} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="round" tick={{ fill: '#64748b', fontSize: 11 }} tickFormatter={(r) => `R${r}`} />
+                  <YAxis tick={{ fill: '#64748b', fontSize: 11 }} />
+                  <Tooltip
+                    contentStyle={{ background: '#0f1629', border: '1px solid #1e293b', borderRadius: 8, fontSize: 12 }}
+                    labelFormatter={(r) => `Round ${r}`}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Line type="monotone" dataKey="attackerCumulativeScore" name="Attacker Total" stroke="#f87171" strokeWidth={2} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="defenderCumulativeScore" name="Defender Total" stroke="#2dd4bf" strokeWidth={2} dot={{ r: 3 }} />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
           </motion.div>
         )}
 
-        {/* Category breakdown */}
-        {report.categories.length > 0 && (
-          <motion.div variants={itemVariants} className="bg-[#0a0f1e] border border-[#1e293b] rounded-2xl p-6">
-            <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-              <BarChart2 size={15} className="text-indigo-400" />
-              Category Breakdown
+        {/* Category breakdown — attacker & defender, separately */}
+        {[
+          { label: 'Attacker Category Breakdown', accent: 'text-red-400', unit: 'successful attacks', categories: report.attackerCategories },
+          { label: 'Defender Category Breakdown', accent: 'text-teal-400', unit: 'successful defenses', categories: report.defenderCategories },
+        ].map(({ label, accent, unit, categories }) => categories.length > 0 && (
+          <motion.div key={label} variants={itemVariants} className="bg-[#0a0f1e] border border-[#1e293b] rounded-2xl p-6">
+            <h3 className={`text-sm font-semibold mb-4 flex items-center gap-2 ${accent}`}>
+              <BarChart2 size={15} />
+              {label}
             </h3>
             <div className="space-y-3">
-              {report.categories.map(c => (
+              {categories.map(c => (
                 <div key={c.category}>
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs text-gray-400">{c.category}</span>
                     <span className="text-xs font-semibold text-white">
-                      {c.defended}/{c.total} defended ({c.accuracy}%)
+                      {c.succeeded}/{c.total} {unit} ({c.accuracy}%)
                     </span>
                   </div>
                   <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
@@ -193,45 +256,72 @@ const AssessmentReport: React.FC<AssessmentReportProps> = ({ report, role, onRes
               ))}
             </div>
           </motion.div>
-        )}
+        ))}
 
-        {/* Strong & Weak topics */}
-        {(report.strongTopics.length > 0 || report.weakTopics.length > 0) && (
-          <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {report.strongTopics.length > 0 && (
-              <div className="bg-teal-950/10 border border-teal-500/20 rounded-2xl p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <TrendingUp size={15} className="text-teal-400" />
-                  <span className="text-sm font-semibold text-teal-400">Strong Topics</span>
+        {/* Strong & Weak topics — attacker & defender, separately */}
+        {[
+          { role: 'Attacker', strong: report.attackerStrongTopics, weak: report.attackerWeakTopics },
+          { role: 'Defender', strong: report.defenderStrongTopics, weak: report.defenderWeakTopics },
+        ].map(({ role, strong, weak }) => (strong.length > 0 || weak.length > 0) && (
+          <motion.div key={role} variants={itemVariants} className="space-y-2">
+            <p className="text-xs text-gray-500 uppercase tracking-wider font-medium px-1">{role} Topics</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {strong.length > 0 && (
+                <div className="bg-teal-950/10 border border-teal-500/20 rounded-2xl p-5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <TrendingUp size={15} className="text-teal-400" />
+                    <span className="text-sm font-semibold text-teal-400">Strong Topics</span>
+                  </div>
+                  <ul className="space-y-1.5">
+                    {strong.map(t => (
+                      <li key={t} className="flex items-center gap-2 text-sm text-gray-300">
+                        <CheckCircle size={12} className="text-teal-400 flex-shrink-0" />
+                        {t}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <ul className="space-y-1.5">
-                  {report.strongTopics.map(t => (
-                    <li key={t} className="flex items-center gap-2 text-sm text-gray-300">
-                      <CheckCircle size={12} className="text-teal-400 flex-shrink-0" />
-                      {t}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {report.weakTopics.length > 0 && (
-              <div className="bg-red-950/10 border border-red-500/20 rounded-2xl p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <TrendingDown size={15} className="text-red-400" />
-                  <span className="text-sm font-semibold text-red-400">Topics to Review</span>
+              )}
+              {weak.length > 0 && (
+                <div className="bg-red-950/10 border border-red-500/20 rounded-2xl p-5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <TrendingDown size={15} className="text-red-400" />
+                    <span className="text-sm font-semibold text-red-400">Topics to Review</span>
+                  </div>
+                  <ul className="space-y-1.5">
+                    {weak.map(t => (
+                      <li key={t} className="flex items-center gap-2 text-sm text-gray-300">
+                        <BookOpen size={12} className="text-red-400 flex-shrink-0" />
+                        {t}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <ul className="space-y-1.5">
-                  {report.weakTopics.map(t => (
-                    <li key={t} className="flex items-center gap-2 text-sm text-gray-300">
-                      <BookOpen size={12} className="text-red-400 flex-shrink-0" />
-                      {t}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+              )}
+            </div>
           </motion.div>
-        )}
+        ))}
+
+        {/* Recommendations — attacker & defender, separate lists */}
+        {[
+          { label: 'Attacker Recommendations', accent: 'text-red-400', recs: report.attackerRecommendations },
+          { label: 'Defender Recommendations', accent: 'text-teal-400', recs: report.defenderRecommendations },
+        ].map(({ label, accent, recs }) => recs.length > 0 && (
+          <motion.div key={label} variants={itemVariants} className="bg-[#0a0f1e] border border-[#1e293b] rounded-2xl p-6">
+            <h3 className={`text-sm font-semibold mb-4 flex items-center gap-2 ${accent}`}>
+              <Lightbulb size={15} className="text-yellow-400" />
+              {label}
+            </h3>
+            <ul className="space-y-3">
+              {recs.map(rec => (
+                <li key={rec.category + rec.title} className="bg-[#0f1629]/60 border border-[#1e293b] rounded-xl p-3">
+                  <p className="text-sm font-semibold text-white">{rec.title}</p>
+                  <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">{rec.description}</p>
+                </li>
+              ))}
+            </ul>
+          </motion.div>
+        ))}
 
         {/* Actions */}
         <motion.div variants={itemVariants} className="flex gap-3">

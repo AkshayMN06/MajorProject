@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React from 'react';
+import { motion } from 'framer-motion';
 import {
-  Target, Shield, ChevronDown, ChevronUp, Send, Check,
-  AlertTriangle, Clock, Loader2, Zap, Lock, Info, BadgeCheck
+  Target, Shield, Check,
+  AlertTriangle, Clock, Zap, Lock, BadgeCheck
 } from 'lucide-react';
-import { Scenario, AttackOption, DefenseOption } from '../../hooks/useScenarioSession';
+import type { Scenario, AttackOption, DefenseOption } from '../../hooks/useScenarioSession';
 
 // ─── Strategy Card (shared for attack & defense) ──────────────────────────────
 
@@ -187,71 +187,35 @@ export const ScenarioHeader: React.FC<ScenarioHeaderProps> = ({
   );
 };
 
-// ─── Parameters Form ──────────────────────────────────────────────────────────
+// ─── Assessment Guide ─────────────────────────────────────────────────────────
+// Explains how the overall assessment works (not role-specific tactics),
+// shown in the sidebar for both the attacker and defender.
 
-interface ParamsFormProps {
-  isAttack: boolean;
-  params: Record<string, string>;
-  onChange: (params: Record<string, string>) => void;
+interface AssessmentGuideProps {
+  role: 'attacker' | 'defender';
 }
 
-export const ParamsForm: React.FC<ParamsFormProps> = ({ isAttack, params, onChange }) => {
-  const [expanded, setExpanded] = useState(false);
-
-  const attackFields = [
-    { key: 'target', label: 'Target', placeholder: 'e.g. Login page, Admin panel' },
-    { key: 'technique', label: 'Technique', placeholder: 'e.g. Dictionary attack, Zero-day' },
-    { key: 'notes', label: 'Notes', placeholder: 'Additional context or reasoning' },
+export const AssessmentGuide: React.FC<AssessmentGuideProps> = ({ role }) => {
+  const accent = role === 'attacker' ? 'text-red-400' : 'text-teal-400';
+  const steps = [
+    'Each round presents one real-world scenario with a target system.',
+    'The Attacker picks the strategy they believe best exploits the scenario; the Defender picks the countermeasure they believe best neutralizes it.',
+    'Once both sides submit, the rule engine evaluates the pairing and returns an outcome: Defended, Partially Defended, or Breached.',
+    'Both participants see the same result, explanation, and score for the round before moving on.',
+    'Scores accumulate across every round. After the final round, a full assessment report summarizes performance for both roles.',
   ];
-
-  const defenseFields = [
-    { key: 'securityLevel', label: 'Security Level', placeholder: 'e.g. High, Enterprise-grade' },
-    { key: 'configNotes', label: 'Configuration Notes', placeholder: 'How this control is configured' },
-    { key: 'notes', label: 'Notes', placeholder: 'Additional reasoning' },
-  ];
-
-  const fields = isAttack ? attackFields : defenseFields;
-  const accentColor = isAttack ? 'border-red-500/50 text-red-400' : 'border-teal-500/50 text-teal-400';
 
   return (
-    <div className="border border-[#1e293b] rounded-xl overflow-hidden">
-      <button
-        onClick={() => setExpanded(e => !e)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-[#0a0f1e]/60 hover:bg-[#0a0f1e] transition-colors text-sm text-gray-400"
-      >
-        <span className="flex items-center gap-2">
-          <Info size={14} />
-          Optional Parameters{' '}
-          <span className="text-xs text-gray-600">(adds bonus points)</span>
-        </span>
-        {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-      </button>
-
-      <AnimatePresence>
-        {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="p-4 space-y-3 bg-[#0a0f1e]/30">
-              {fields.map(f => (
-                <div key={f.key}>
-                  <label className="block text-xs text-gray-500 mb-1">{f.label}</label>
-                  <input
-                    value={params[f.key] ?? ''}
-                    onChange={e => onChange({ ...params, [f.key]: e.target.value })}
-                    placeholder={f.placeholder}
-                    className="w-full bg-gray-900/60 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-gray-500 transition-colors"
-                  />
-                </div>
-              ))}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+    <div className={`bg-[#0a0f1e]/60 border border-[#1e293b] rounded-xl p-4`}>
+      <div className={`flex items-center gap-2 mb-3 ${accent}`}>
+        <BadgeCheck size={14} />
+        <h3 className="text-xs font-bold tracking-widest uppercase">How This Assessment Works</h3>
+      </div>
+      <ol className="space-y-2 text-xs text-gray-400 leading-relaxed list-decimal list-inside">
+        {steps.map((step, i) => (
+          <li key={i}>{step}</li>
+        ))}
+      </ol>
     </div>
   );
 };
