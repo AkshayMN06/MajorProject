@@ -17,6 +17,8 @@ import analyticsRoutes from './routes/analytics.routes';
 import recommendationsRoutes from './routes/recommendations.routes';
 import modulesRoutes from './routes/modules.routes';
 import labsRoutes from './routes/labs.routes';
+import quizRoutes from './routes/quiz.routes';
+import exportRoutes from './routes/export.routes';
 
 const app = express();
 const httpServer = createServer(app);
@@ -40,6 +42,8 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/recommendations', recommendationsRoutes);
 app.use('/api/modules', modulesRoutes);
 app.use('/api/labs', labsRoutes);
+app.use('/api/quiz', quizRoutes);
+app.use('/api/export', exportRoutes);
 
 // Global Error Handler
 app.use(errorHandler);

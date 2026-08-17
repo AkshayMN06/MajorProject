@@ -90,7 +90,7 @@ router.get('/round-result', validate(roundResultQuerySchema), async (req: AuthRe
 // GET /api/assessment-report/:sessionId
 router.get('/assessment-report/:sessionId', async (req: AuthRequest, res: Response) => {
   try {
-    const report = await buildAssessmentReport(req.params.sessionId);
+    const report = await buildAssessmentReport(String(req.params.sessionId));
     if (!report) return res.status(404).json({ success: false, error: 'Session not found' });
     res.json({ success: true, data: report });
   } catch (err: any) {

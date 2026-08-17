@@ -22,52 +22,54 @@ describe('ScoreEngine', () => {
     vi.clearAllMocks();
   });
 
-  describe('calculateScore', () => {
-    it('outcome: defended, timeTaken: 20, isConceptCorrect: true', async () => {
+  // Score = correctChoice + timeEfficiency + consistency - repeatedMistakes.
+  // Defender and attacker award correctChoice differently (see scoreEngine.ts),
+  // so each is exercised directly rather than through a shared generic method.
+  describe('calculateDefenderScore', () => {
+    it('outcome: defended, timeTaken: 20 -> correctChoice=30, timeEfficiency=10, total=40', async () => {
       mocks.mockFindMany.mockResolvedValue([]);
       mocks.mockCount.mockResolvedValue(0);
 
-      const result = await scoreEngine.calculateScore({
+      const result = await scoreEngine.calculateDefenderScore({
         userId: 'u1', sessionId: 's1', category: 'cat', outcome: 'defended',
         timeTaken: 20, isConceptCorrect: true, choice: 'c1'
       });
-      
-      expect(result.correctConceptUsage).toBe(20);
-      expect(result.correctDefense).toBe(30);
+
+      expect(result.correctChoice).toBe(30);
       expect(result.timeEfficiency).toBe(10);
-      expect(result.total).toBe(60);
+      expect(result.total).toBe(40);
     });
 
-    it('outcome: partially_defended, timeTaken: 45', async () => {
+    it('outcome: partially_defended, timeTaken: 45 -> correctChoice=25, timeEfficiency=7', async () => {
       mocks.mockFindMany.mockResolvedValue([]);
       mocks.mockCount.mockResolvedValue(0);
 
-      const result = await scoreEngine.calculateScore({
+      const result = await scoreEngine.calculateDefenderScore({
         userId: 'u1', sessionId: 's1', category: 'cat', outcome: 'partially_defended',
         timeTaken: 45, isConceptCorrect: false, choice: 'c1'
       });
-      
-      expect(result.correctDefense).toBe(15);
+
+      expect(result.correctChoice).toBe(25);
       expect(result.timeEfficiency).toBe(7);
     });
 
-    it('outcome: breached, timeTaken: 100', async () => {
+    it('outcome: breached, timeTaken: 100 -> correctChoice=0, timeEfficiency=0', async () => {
       mocks.mockFindMany.mockResolvedValue([]);
       mocks.mockCount.mockResolvedValue(0);
 
-      const result = await scoreEngine.calculateScore({
+      const result = await scoreEngine.calculateDefenderScore({
         userId: 'u1', sessionId: 's1', category: 'cat', outcome: 'breached',
         timeTaken: 100, isConceptCorrect: false, choice: 'c1'
       });
-      
-      expect(result.correctDefense).toBe(0);
+
+      expect(result.correctChoice).toBe(0);
       expect(result.timeEfficiency).toBe(0);
     });
 
     it('timeTaken: 29 -> timeEfficiency=10', async () => {
       mocks.mockFindMany.mockResolvedValue([]);
       mocks.mockCount.mockResolvedValue(0);
-      const res = await scoreEngine.calculateScore({
+      const res = await scoreEngine.calculateDefenderScore({
         userId: 'u1', sessionId: 's1', category: 'cat', outcome: 'breached', timeTaken: 29, isConceptCorrect: false, choice: 'c1'
       });
       expect(res.timeEfficiency).toBe(10);
@@ -76,7 +78,7 @@ describe('ScoreEngine', () => {
     it('timeTaken: 59 -> timeEfficiency=7', async () => {
       mocks.mockFindMany.mockResolvedValue([]);
       mocks.mockCount.mockResolvedValue(0);
-      const res = await scoreEngine.calculateScore({
+      const res = await scoreEngine.calculateDefenderScore({
         userId: 'u1', sessionId: 's1', category: 'cat', outcome: 'breached', timeTaken: 59, isConceptCorrect: false, choice: 'c1'
       });
       expect(res.timeEfficiency).toBe(7);
@@ -85,7 +87,7 @@ describe('ScoreEngine', () => {
     it('timeTaken: 89 -> timeEfficiency=4', async () => {
       mocks.mockFindMany.mockResolvedValue([]);
       mocks.mockCount.mockResolvedValue(0);
-      const res = await scoreEngine.calculateScore({
+      const res = await scoreEngine.calculateDefenderScore({
         userId: 'u1', sessionId: 's1', category: 'cat', outcome: 'breached', timeTaken: 89, isConceptCorrect: false, choice: 'c1'
       });
       expect(res.timeEfficiency).toBe(4);
@@ -94,7 +96,7 @@ describe('ScoreEngine', () => {
     it('timeTaken: 90 -> timeEfficiency=0', async () => {
       mocks.mockFindMany.mockResolvedValue([]);
       mocks.mockCount.mockResolvedValue(0);
-      const res = await scoreEngine.calculateScore({
+      const res = await scoreEngine.calculateDefenderScore({
         userId: 'u1', sessionId: 's1', category: 'cat', outcome: 'breached', timeTaken: 90, isConceptCorrect: false, choice: 'c1'
       });
       expect(res.timeEfficiency).toBe(0);
@@ -105,7 +107,7 @@ describe('ScoreEngine', () => {
         { outcome: 'defended' }, { outcome: 'defended' }, { outcome: 'defended' }
       ]);
       mocks.mockCount.mockResolvedValue(0);
-      const res = await scoreEngine.calculateScore({
+      const res = await scoreEngine.calculateDefenderScore({
         userId: 'u1', sessionId: 's1', category: 'cat', outcome: 'defended', timeTaken: 20, isConceptCorrect: true, choice: 'c1'
       });
       expect(res.consistency).toBe(10);
@@ -116,7 +118,7 @@ describe('ScoreEngine', () => {
         { outcome: 'defended' }, { outcome: 'defended' }, { outcome: 'breached' }
       ]);
       mocks.mockCount.mockResolvedValue(0);
-      const res = await scoreEngine.calculateScore({
+      const res = await scoreEngine.calculateDefenderScore({
         userId: 'u1', sessionId: 's1', category: 'cat', outcome: 'defended', timeTaken: 20, isConceptCorrect: true, choice: 'c1'
       });
       expect(res.consistency).toBe(5);
@@ -127,7 +129,7 @@ describe('ScoreEngine', () => {
         { outcome: 'defended' }
       ]);
       mocks.mockCount.mockResolvedValue(0);
-      const res = await scoreEngine.calculateScore({
+      const res = await scoreEngine.calculateDefenderScore({
         userId: 'u1', sessionId: 's1', category: 'cat', outcome: 'defended', timeTaken: 20, isConceptCorrect: true, choice: 'c1'
       });
       expect(res.consistency).toBe(0);
@@ -136,7 +138,7 @@ describe('ScoreEngine', () => {
     it('Repeated mistake: Prisma count returns 2 -> penalty=10', async () => {
       mocks.mockFindMany.mockResolvedValue([]);
       mocks.mockCount.mockResolvedValue(2);
-      const res = await scoreEngine.calculateScore({
+      const res = await scoreEngine.calculateDefenderScore({
         userId: 'u1', sessionId: 's1', category: 'cat', outcome: 'breached', timeTaken: 100, isConceptCorrect: false, choice: 'c1'
       });
       expect(res.repeatedMistakes).toBe(10);
@@ -145,10 +147,53 @@ describe('ScoreEngine', () => {
     it('Total score is never negative (min 0)', async () => {
       mocks.mockFindMany.mockResolvedValue([]);
       mocks.mockCount.mockResolvedValue(10); // 50 penalty
-      const res = await scoreEngine.calculateScore({
+      const res = await scoreEngine.calculateDefenderScore({
         userId: 'u1', sessionId: 's1', category: 'cat', outcome: 'breached', timeTaken: 100, isConceptCorrect: false, choice: 'c1'
       });
-      expect(res.total).toBe(0); // 0 + 0 + 0 + 0 - 50 -> clamped to 0
+      expect(res.total).toBe(0); // 0 + 0 + 0 - 50 -> clamped to 0
+    });
+  });
+
+  describe('calculateAttackerScore', () => {
+    it('outcome: breached, timeTaken: 100 -> correctChoice=30 (successful attack)', async () => {
+      mocks.mockFindMany.mockResolvedValue([]);
+      mocks.mockCount.mockResolvedValue(0);
+
+      const result = await scoreEngine.calculateAttackerScore({
+        userId: 'u1', sessionId: 's1', category: 'cat', outcome: 'breached',
+        timeTaken: 100, isConceptCorrect: true, choice: 'c1'
+      });
+
+      expect(result.correctChoice).toBe(30);
+      expect(result.timeEfficiency).toBe(0);
+      expect(result.total).toBe(30);
+    });
+
+    it('outcome: partially_defended, timeTaken: 45 -> correctChoice=25', async () => {
+      mocks.mockFindMany.mockResolvedValue([]);
+      mocks.mockCount.mockResolvedValue(0);
+
+      const result = await scoreEngine.calculateAttackerScore({
+        userId: 'u1', sessionId: 's1', category: 'cat', outcome: 'partially_defended',
+        timeTaken: 45, isConceptCorrect: true, choice: 'c1'
+      });
+
+      expect(result.correctChoice).toBe(25);
+      expect(result.timeEfficiency).toBe(7);
+    });
+
+    it('outcome: defended (attack failed), timeTaken: 20 -> correctChoice=5 (plausible attempt credit)', async () => {
+      mocks.mockFindMany.mockResolvedValue([]);
+      mocks.mockCount.mockResolvedValue(0);
+
+      const result = await scoreEngine.calculateAttackerScore({
+        userId: 'u1', sessionId: 's1', category: 'cat', outcome: 'defended',
+        timeTaken: 20, isConceptCorrect: false, choice: 'c1'
+      });
+
+      expect(result.correctChoice).toBe(5);
+      expect(result.timeEfficiency).toBe(10);
+      expect(result.total).toBe(15);
     });
   });
 

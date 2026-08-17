@@ -12,7 +12,7 @@ router.use(authenticate);
 // GET /api/users/:id — get user by ID
 router.get('/:id', async (req: AuthRequest, res: Response) => {
   try {
-    const user = await prisma.user.findUnique({ where: { id: req.params.id } });
+    const user = await prisma.user.findUnique({ where: { id: String(req.params.id) } });
     if (!user) return res.status(404).json({ success: false, error: 'User not found' });
     const { password, ...userWithoutPass } = user;
     res.json({ success: true, data: userWithoutPass });
@@ -58,7 +58,7 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
     delete updateData.email;
 
     const user = await prisma.user.update({
-      where: { id: req.params.id },
+      where: { id: String(req.params.id) },
       data: updateData
     });
     
@@ -72,7 +72,7 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
 // GET /api/users/:id/stats — get user analytics summary
 router.get('/:id/stats', async (req: AuthRequest, res: Response) => {
   try {
-    const summary = await AnalyticsEngine.getAnalyticsSummary(req.params.id);
+    const summary = await AnalyticsEngine.getAnalyticsSummary(String(req.params.id));
     res.json({ success: true, data: summary });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

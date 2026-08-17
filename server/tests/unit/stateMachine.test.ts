@@ -1,137 +1,75 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { stateMachine, SessionState } from '../../src/services/stateMachine';
+import { describe, it, expect } from 'vitest';
+import { canTransition, transition, transitionThrough, SessionState } from '../../src/services/stateMachine';
 
-describe('StateMachine', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+describe('stateMachine', () => {
+  describe('canTransition', () => {
+    it('START -> WAITING_FOR_PARTICIPANT is valid', () => {
+      expect(canTransition(SessionState.START, SessionState.WAITING_FOR_PARTICIPANT)).toBe(true);
+    });
+
+    it('START -> ASSESSMENT_COMPLETE is invalid (cannot skip the pipeline)', () => {
+      expect(canTransition(SessionState.START, SessionState.ASSESSMENT_COMPLETE)).toBe(false);
+    });
+
+    it('SCENARIO_LOADED -> ATTACK_SELECTION is valid', () => {
+      expect(canTransition(SessionState.SCENARIO_LOADED, SessionState.ATTACK_SELECTION)).toBe(true);
+    });
+
+    it('NEXT_ROUND -> SCENARIO_LOADED is valid (loop into another round)', () => {
+      expect(canTransition(SessionState.NEXT_ROUND, SessionState.SCENARIO_LOADED)).toBe(true);
+    });
+
+    it('NEXT_ROUND -> ASSESSMENT_COMPLETE is valid (end after the last round)', () => {
+      expect(canTransition(SessionState.NEXT_ROUND, SessionState.ASSESSMENT_COMPLETE)).toBe(true);
+    });
+
+    it('ASSESSMENT_COMPLETE has no valid outgoing transitions (terminal state)', () => {
+      expect(canTransition(SessionState.ASSESSMENT_COMPLETE, SessionState.START)).toBe(false);
+      expect(canTransition(SessionState.ASSESSMENT_COMPLETE, SessionState.SCENARIO_LOADED)).toBe(false);
+    });
   });
 
-  it('initialises a session to START state', () => {
-    const sessionId = 'session-1';
-    stateMachine.initSession(sessionId);
-    expect(stateMachine.getState(sessionId)).toBe(SessionState.START);
+  describe('transition', () => {
+    it('a valid hop returns the destination state', () => {
+      expect(transition(SessionState.RULE_PROCESSING, SessionState.RESULT_GENERATED)).toBe(SessionState.RESULT_GENERATED);
+    });
+
+    it('an invalid hop throws', () => {
+      expect(() => transition(SessionState.START, SessionState.RESULT_GENERATED)).toThrow(
+        'Invalid session state transition: START -> RESULT_GENERATED'
+      );
+    });
+
+    it('an unknown "from" state throws', () => {
+      expect(() => transition('NOT_A_REAL_STATE', SessionState.START)).toThrow('Unknown session state: NOT_A_REAL_STATE');
+    });
   });
 
-  it('getState returns START after init', () => {
-    const sessionId = 'session-2';
-    stateMachine.initSession(sessionId);
-    expect(stateMachine.getState(sessionId)).toBe(SessionState.START);
-  });
+  describe('transitionThrough', () => {
+    it('validates and follows a multi-hop chain, returning the final state', () => {
+      const result = transitionThrough(SessionState.SESSION_READY, [SessionState.SCENARIO_LOADED, SessionState.ATTACK_SELECTION]);
+      expect(result).toBe(SessionState.ATTACK_SELECTION);
+    });
 
-  it('getState on unknown session throws error', () => {
-    expect(() => stateMachine.getState('unknown')).toThrow('Session unknown not found');
-  });
+    it('throws on the first invalid hop in the chain, without silently skipping it', () => {
+      expect(() =>
+        transitionThrough(SessionState.SESSION_READY, [SessionState.ATTACK_SELECTION, SessionState.SCENARIO_LOADED])
+      ).toThrow('Invalid session state transition: SESSION_READY -> ATTACK_SELECTION');
+    });
 
-  it('canTransition(START, WAITING_FOR_PLAYERS) -> true', () => {
-    expect(stateMachine.canTransition(SessionState.START, SessionState.WAITING_FOR_PLAYERS)).toBe(true);
-  });
-
-  it('canTransition(START, SESSION_COMPLETE) -> false (invalid skip)', () => {
-    expect(stateMachine.canTransition(SessionState.START, SessionState.SESSION_COMPLETE)).toBe(false);
-  });
-
-  it('canTransition(SCENARIO_LOADED, ATTACK_SELECTION) -> true', () => {
-    expect(stateMachine.canTransition(SessionState.SCENARIO_LOADED, SessionState.ATTACK_SELECTION)).toBe(true);
-  });
-
-  it('transition(START -> WAITING_FOR_PLAYERS) -> valid, state changes', () => {
-    const sessionId = 'session-3';
-    stateMachine.initSession(sessionId);
-    stateMachine.transition(sessionId, SessionState.START, SessionState.WAITING_FOR_PLAYERS);
-    expect(stateMachine.getState(sessionId)).toBe(SessionState.WAITING_FOR_PLAYERS);
-  });
-
-  it('transition(START -> SESSION_COMPLETE) -> throws invalid transition', () => {
-    const sessionId = 'session-4';
-    stateMachine.initSession(sessionId);
-    expect(() => stateMachine.transition(sessionId, SessionState.START, SessionState.SESSION_COMPLETE)).toThrow(/Invalid state transition/);
-  });
-
-  it('transition with wrong fromState (mismatch) -> throws error', () => {
-    const sessionId = 'session-5';
-    stateMachine.initSession(sessionId);
-    expect(() => stateMachine.transition(sessionId, SessionState.WAITING_FOR_PLAYERS, SessionState.SCENARIO_LOADED)).toThrow(/Cannot transition from/);
-  });
-
-  it('Full happy path: walk through all 10 states in sequence', () => {
-    const sessionId = 'session-happy';
-    stateMachine.initSession(sessionId);
-
-    const sequence = [
-      SessionState.START,
-      SessionState.WAITING_FOR_PLAYERS,
-      SessionState.SCENARIO_LOADED,
-      SessionState.ATTACK_SELECTION,
-      SessionState.DEFENSE_SELECTION,
-      SessionState.RULE_EVALUATION,
-      SessionState.SCORE_UPDATE,
-      SessionState.EVENT_LOGGING,
-      SessionState.NEXT_SCENARIO,
-      SessionState.SESSION_COMPLETE
-    ];
-
-    for (let i = 0; i < sequence.length - 1; i++) {
-      stateMachine.transition(sessionId, sequence[i], sequence[i + 1]);
-    }
-  });
-
-  it('After SESSION_COMPLETE, getState should throw (session deleted)', () => {
-    const sessionId = 'session-complete';
-    stateMachine.initSession(sessionId);
-    
-    const sequence = [
-      SessionState.START,
-      SessionState.WAITING_FOR_PLAYERS,
-      SessionState.SCENARIO_LOADED,
-      SessionState.ATTACK_SELECTION,
-      SessionState.DEFENSE_SELECTION,
-      SessionState.RULE_EVALUATION,
-      SessionState.SCORE_UPDATE,
-      SessionState.EVENT_LOGGING,
-      SessionState.NEXT_SCENARIO,
-      SessionState.SESSION_COMPLETE
-    ];
-
-    for (let i = 0; i < sequence.length - 1; i++) {
-      stateMachine.transition(sessionId, sequence[i], sequence[i + 1]);
-    }
-
-    expect(() => stateMachine.getState(sessionId)).toThrow(/not found/);
-  });
-
-  it('state_changed event is emitted on transitions', () => {
-    const sessionId = 'session-event';
-    stateMachine.initSession(sessionId);
-    
-    const spy = vi.fn();
-    stateMachine.on('state_changed', spy);
-    
-    stateMachine.transition(sessionId, SessionState.START, SessionState.WAITING_FOR_PLAYERS);
-    
-    expect(spy).toHaveBeenCalledWith(sessionId, SessionState.WAITING_FOR_PLAYERS);
-  });
-
-  it('NEXT_SCENARIO -> SCENARIO_LOADED (loop for next scenario) is valid', () => {
-    const sessionId = 'session-loop';
-    stateMachine.initSession(sessionId);
-    
-    const sequenceToNext = [
-      SessionState.START,
-      SessionState.WAITING_FOR_PLAYERS,
-      SessionState.SCENARIO_LOADED,
-      SessionState.ATTACK_SELECTION,
-      SessionState.DEFENSE_SELECTION,
-      SessionState.RULE_EVALUATION,
-      SessionState.SCORE_UPDATE,
-      SessionState.EVENT_LOGGING,
-      SessionState.NEXT_SCENARIO
-    ];
-
-    for (let i = 0; i < sequenceToNext.length - 1; i++) {
-      stateMachine.transition(sessionId, sequenceToNext[i], sequenceToNext[i + 1]);
-    }
-
-    stateMachine.transition(sessionId, SessionState.NEXT_SCENARIO, SessionState.SCENARIO_LOADED);
-    expect(stateMachine.getState(sessionId)).toBe(SessionState.SCENARIO_LOADED);
+    it('walks the full 10-state round pipeline in sequence', () => {
+      const result = transitionThrough(SessionState.START, [
+        SessionState.WAITING_FOR_PARTICIPANT,
+        SessionState.SESSION_READY,
+        SessionState.SCENARIO_LOADED,
+        SessionState.ATTACK_SELECTION,
+        SessionState.DEFENSE_SELECTION,
+        SessionState.RULE_PROCESSING,
+        SessionState.RESULT_GENERATED,
+        SessionState.NEXT_ROUND,
+        SessionState.ASSESSMENT_COMPLETE,
+      ]);
+      expect(result).toBe(SessionState.ASSESSMENT_COMPLETE);
+    });
   });
 });

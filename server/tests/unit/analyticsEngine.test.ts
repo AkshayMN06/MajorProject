@@ -6,6 +6,10 @@ const mocks = vi.hoisted(() => ({
   mockUpdate: vi.fn(),
   mockFindMany: vi.fn(),
   mockCount: vi.fn(),
+  mockSnapshotFindMany: vi.fn(),
+  mockSnapshotCreate: vi.fn(),
+  mockAttemptFindMany: vi.fn(),
+  mockSessionFindUnique: vi.fn(),
 }));
 
 vi.mock('@prisma/client', () => {
@@ -18,6 +22,14 @@ vi.mock('@prisma/client', () => {
     },
     session: {
       count: mocks.mockCount,
+      findUnique: mocks.mockSessionFindUnique,
+    },
+    assessmentSnapshot: {
+      findMany: mocks.mockSnapshotFindMany,
+      create: mocks.mockSnapshotCreate,
+    },
+    attempt: {
+      findMany: mocks.mockAttemptFindMany,
     },
   };
   return { PrismaClient: vi.fn(() => mockPrisma) };
@@ -28,6 +40,10 @@ import { AnalyticsEngine } from '../../src/services/analyticsEngine';
 describe('AnalyticsEngine', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Defaults for the collaborators every getAnalyticsSummary() call touches
+    // beyond the per-category totals under test in each case.
+    mocks.mockSnapshotFindMany.mockResolvedValue([]);
+    mocks.mockAttemptFindMany.mockResolvedValue([]);
   });
 
   describe('updateAnalytics', () => {
@@ -103,6 +119,40 @@ describe('AnalyticsEngine', () => {
       expect(summary.incorrectDecisions).toBe(0);
       expect(summary.averageScore).toBe(0);
       expect(summary.averageResponseTime).toBe(0);
+      expect(summary.accuracyChangeVsLastWeek).toBeNull();
+      expect(summary.responseTimeStats).toBeNull();
+    });
+
+    it('accuracyChangeVsLastWeek is null when there is no snapshot history at all', async () => {
+      mocks.mockFindMany.mockResolvedValue([]);
+      mocks.mockCount.mockResolvedValue(0);
+      mocks.mockSnapshotFindMany.mockResolvedValue([]);
+
+      const summary = await AnalyticsEngine.getAnalyticsSummary('u1');
+      expect(summary.accuracyChangeVsLastWeek).toBeNull();
+    });
+
+    it('accuracyChangeVsLastWeek compares this week vs. the prior week', async () => {
+      mocks.mockFindMany.mockResolvedValue([]);
+      mocks.mockCount.mockResolvedValue(0);
+      // First call inside getAnalyticsSummary is "this week", second is "last week".
+      mocks.mockSnapshotFindMany
+        .mockResolvedValueOnce([{ accuracy: 90 }, { accuracy: 70 }]) // this week avg = 80
+        .mockResolvedValueOnce([{ accuracy: 60 }]); // last week avg = 60
+
+      const summary = await AnalyticsEngine.getAnalyticsSummary('u1');
+      expect(summary.accuracyChangeVsLastWeek).toBe(20);
+    });
+
+    it('responseTimeStats derives fastest/median/slowest from recent attempts', async () => {
+      mocks.mockFindMany.mockResolvedValue([]);
+      mocks.mockCount.mockResolvedValue(0);
+      mocks.mockAttemptFindMany.mockResolvedValue([
+        { timeTaken: 30 }, { timeTaken: 10 }, { timeTaken: 20 },
+      ]);
+
+      const summary = await AnalyticsEngine.getAnalyticsSummary('u1');
+      expect(summary.responseTimeStats).toEqual({ fastest: 10, median: 20, slowest: 30 });
     });
   });
 
@@ -122,12 +172,39 @@ describe('AnalyticsEngine', () => {
   });
 
   describe('getPerformanceTrends', () => {
-    it('returns 7 data points with date, accuracy, responseTime', async () => {
-      const result = await AnalyticsEngine.getPerformanceTrends('u1', 7);
-      expect(result).toHaveLength(7);
-      expect(result[0]).toHaveProperty('date');
-      expect(result[0]).toHaveProperty('accuracy');
-      expect(result[0]).toHaveProperty('responseTime');
+    it('maps AssessmentSnapshot rows to {date, accuracy, responseTime} points, oldest first', async () => {
+      mocks.mockSnapshotFindMany.mockResolvedValue([
+        { completedAt: new Date('2026-08-01T00:00:00Z'), accuracy: 75.4, averageTime: 22.6 },
+        { completedAt: new Date('2026-08-03T00:00:00Z'), accuracy: 88.0, averageTime: 15.2 },
+      ]);
+
+      const result = await AnalyticsEngine.getPerformanceTrends('u1');
+
+      expect(mocks.mockSnapshotFindMany).toHaveBeenCalledWith({
+        where: { userId: 'u1' },
+        orderBy: { completedAt: 'asc' },
+        take: 10,
+      });
+      expect(result).toEqual([
+        { date: '2026-08-01', accuracy: 75, responseTime: 23 },
+        { date: '2026-08-03', accuracy: 88, responseTime: 15 },
+      ]);
+    });
+
+    it('returns an empty array when the user has no completed assessments yet', async () => {
+      mocks.mockSnapshotFindMany.mockResolvedValue([]);
+      const result = await AnalyticsEngine.getPerformanceTrends('u1');
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('recordAssessmentCompletion', () => {
+    it('does nothing if the session cannot be found', async () => {
+      mocks.mockSessionFindUnique.mockResolvedValue(null);
+
+      await AnalyticsEngine.recordAssessmentCompletion('missing-session');
+
+      expect(mocks.mockSnapshotCreate).not.toHaveBeenCalled();
     });
   });
 });

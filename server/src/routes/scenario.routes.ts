@@ -33,7 +33,7 @@ router.get('/categories', async (req: AuthRequest, res: Response) => {
 router.get('/:id', async (req: AuthRequest, res: Response) => {
   try {
     const scenario = await prisma.scenario.findUnique({
-      where: { id: req.params.id },
+      where: { id: String(req.params.id) },
     });
     if (!scenario) return res.status(404).json({ success: false, error: 'Scenario not found' });
     res.json({ success: true, data: scenario });

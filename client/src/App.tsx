@@ -2,6 +2,8 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { MainLayout } from './components/layout/MainLayout';
 import { DashboardPage } from './pages/DashboardPage';
 import ScenarioPage from './pages/ScenarioPage';
+import PreTestPage from './pages/PreTestPage';
+import PostTestPage from './pages/PostTestPage';
 import PracticeLabsPage from './pages/PracticeLabsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import ProfilePage from './pages/ProfilePage';
@@ -25,6 +27,8 @@ function App() {
             <Route path="/" element={<MainLayout />}>
               <Route index element={<DashboardPage />} />
               <Route path="scenario" element={<ScenarioPage />} />
+              <Route path="pre-test" element={<PreTestPage />} />
+              <Route path="post-test" element={<PostTestPage />} />
               <Route path="labs" element={<PracticeLabsPage />} />
               <Route path="analytics" element={<AnalyticsPage />} />
               <Route path="profile" element={<ProfilePage />} />

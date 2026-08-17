@@ -174,7 +174,7 @@ router.get('/active', async (req: AuthRequest, res: Response) => {
 router.get('/:id', async (req: AuthRequest, res: Response) => {
   try {
     const session = await prisma.session.findUnique({
-      where: { id: req.params.id },
+      where: { id: String(req.params.id) },
       include: { attacker: true, defender: true, events: true },
     });
     if (!session) return res.status(404).json({ success: false, error: 'Session not found' });
@@ -187,7 +187,7 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
 // GET /api/sessions/:id/report — alias of GET /api/assessment-report/:sessionId
 router.get('/:id/report', async (req: AuthRequest, res: Response) => {
   try {
-    const report = await buildAssessmentReport(req.params.id);
+    const report = await buildAssessmentReport(String(req.params.id));
     if (!report) return res.status(404).json({ success: false, error: 'Session not found' });
     res.json({ success: true, data: report });
   } catch (err: any) {

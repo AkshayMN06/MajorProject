@@ -1,100 +1,64 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { stateMachine, SessionState } from '../../src/services/stateMachine';
+import { describe, it, expect } from 'vitest';
+import { transition, transitionThrough, SessionState } from '../../src/services/stateMachine';
 
-describe('Session Handling Integration Tests', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('Two parallel sessions (different IDs) don\'t interfere with each other', () => {
-    stateMachine.initSession('s1');
-    stateMachine.initSession('s2');
-
-    stateMachine.transition('s1', SessionState.START, SessionState.WAITING_FOR_PLAYERS);
-    
-    expect(stateMachine.getState('s1')).toBe(SessionState.WAITING_FOR_PLAYERS);
-    expect(stateMachine.getState('s2')).toBe(SessionState.START);
-  });
-
-  it('Session completes: state is removed from memory after SESSION_COMPLETE', () => {
-    stateMachine.initSession('s3');
-    const sequence = [
-      SessionState.START,
-      SessionState.WAITING_FOR_PLAYERS,
+/**
+ * The state machine is stateless by design (see src/services/stateMachine.ts)
+ * — Session.status in the database is the single source of truth, not an
+ * in-memory map. These tests exercise the same transition sequences
+ * src/services/sessionActions.ts drives a real session through, to prove the
+ * guard behaves correctly across a full multi-round session lifecycle.
+ */
+describe('Session lifecycle integration (stateMachine transitions)', () => {
+  it('a full single round: SESSION_READY through RESULT_GENERATED', () => {
+    let status: SessionState = transitionThrough(SessionState.SESSION_READY, [
       SessionState.SCENARIO_LOADED,
       SessionState.ATTACK_SELECTION,
-      SessionState.DEFENSE_SELECTION,
-      SessionState.RULE_EVALUATION,
-      SessionState.SCORE_UPDATE,
-      SessionState.EVENT_LOGGING,
-      SessionState.NEXT_SCENARIO,
-      SessionState.SESSION_COMPLETE
-    ];
+    ]);
+    expect(status).toBe(SessionState.ATTACK_SELECTION);
 
-    for (let i = 0; i < sequence.length - 1; i++) {
-      stateMachine.transition('s3', sequence[i], sequence[i + 1]);
-    }
-
-    expect(() => stateMachine.getState('s3')).toThrow('Session s3 not found');
+    status = transition(status, SessionState.DEFENSE_SELECTION);
+    status = transition(status, SessionState.RULE_PROCESSING);
+    status = transition(status, SessionState.RESULT_GENERATED);
+    expect(status).toBe(SessionState.RESULT_GENERATED);
   });
 
-  it('Cannot transition a deleted/completed session', () => {
-    stateMachine.initSession('s4');
-    const sequence = [
-      SessionState.START,
-      SessionState.WAITING_FOR_PLAYERS,
-      SessionState.SCENARIO_LOADED,
-      SessionState.ATTACK_SELECTION,
-      SessionState.DEFENSE_SELECTION,
-      SessionState.RULE_EVALUATION,
-      SessionState.SCORE_UPDATE,
-      SessionState.EVENT_LOGGING,
-      SessionState.NEXT_SCENARIO,
-      SessionState.SESSION_COMPLETE
-    ];
-
-    for (let i = 0; i < sequence.length - 1; i++) {
-      stateMachine.transition('s4', sequence[i], sequence[i + 1]);
-    }
-
-    // Try transitioning a deleted session
-    expect(() => stateMachine.transition('s4', SessionState.SESSION_COMPLETE, SessionState.START)).toThrow('Session s4 not found');
+  it('looping into a second round: NEXT_ROUND -> SCENARIO_LOADED -> ATTACK_SELECTION', () => {
+    const afterRoundOne = transition(SessionState.RESULT_GENERATED, SessionState.NEXT_ROUND);
+    const roundTwoStatus = transitionThrough(afterRoundOne, [SessionState.SCENARIO_LOADED, SessionState.ATTACK_SELECTION]);
+    expect(roundTwoStatus).toBe(SessionState.ATTACK_SELECTION);
   });
 
-  it('Full multi-scenario simulation and emits state_changed events at each transition', () => {
-    const sId = 's5';
-    stateMachine.initSession(sId);
-    
-    const eventSpy = vi.fn();
-    stateMachine.on('state_changed', eventSpy);
+  it('ending after the final round: NEXT_ROUND -> ASSESSMENT_COMPLETE', () => {
+    const afterLastRound = transition(SessionState.RESULT_GENERATED, SessionState.NEXT_ROUND);
+    const completed = transition(afterLastRound, SessionState.ASSESSMENT_COMPLETE);
+    expect(completed).toBe(SessionState.ASSESSMENT_COMPLETE);
+  });
 
-    const fullLoop = [
-      SessionState.START,
-      SessionState.WAITING_FOR_PLAYERS,
-      SessionState.SCENARIO_LOADED,
-      SessionState.ATTACK_SELECTION,
-      SessionState.DEFENSE_SELECTION,
-      SessionState.RULE_EVALUATION,
-      SessionState.SCORE_UPDATE,
-      SessionState.EVENT_LOGGING,
-      SessionState.NEXT_SCENARIO,
-      // Load next
-      SessionState.SCENARIO_LOADED,
-      SessionState.ATTACK_SELECTION,
-      SessionState.DEFENSE_SELECTION,
-      SessionState.RULE_EVALUATION,
-      SessionState.SCORE_UPDATE,
-      SessionState.EVENT_LOGGING,
-      SessionState.NEXT_SCENARIO,
-      // Complete
-      SessionState.SESSION_COMPLETE
-    ];
+  it('a completed session cannot be advanced further (terminal state)', () => {
+    expect(() => transition(SessionState.ASSESSMENT_COMPLETE, SessionState.SCENARIO_LOADED)).toThrow(
+      'Invalid session state transition: ASSESSMENT_COMPLETE -> SCENARIO_LOADED'
+    );
+  });
 
-    for (let i = 0; i < fullLoop.length - 1; i++) {
-      stateMachine.transition(sId, fullLoop[i], fullLoop[i + 1]);
-      expect(eventSpy).toHaveBeenLastCalledWith(sId, fullLoop[i + 1]);
-    }
+  it('skipping a step (e.g. straight to RULE_PROCESSING without a defense) is rejected', () => {
+    expect(() => transition(SessionState.ATTACK_SELECTION, SessionState.RULE_PROCESSING)).toThrow(
+      'Invalid session state transition: ATTACK_SELECTION -> RULE_PROCESSING'
+    );
+  });
 
-    expect(() => stateMachine.getState(sId)).toThrow();
+  it('two sessions advancing interleaved never interfere — the guard is stateless', () => {
+    // sessionActions.ts persists status per-session in the database; the
+    // guard itself holds no memory, so interleaving two independent chains
+    // must not let one affect the other's next valid move.
+    let sessionA = SessionState.SESSION_READY;
+    let sessionB = SessionState.START;
+
+    sessionA = transition(sessionA, SessionState.SCENARIO_LOADED);
+    sessionB = transition(sessionB, SessionState.WAITING_FOR_PARTICIPANT);
+    sessionA = transition(sessionA, SessionState.ATTACK_SELECTION);
+    sessionB = transition(sessionB, SessionState.SESSION_READY);
+
+    expect(sessionA).toBe(SessionState.ATTACK_SELECTION);
+    expect(sessionB).toBe(SessionState.SESSION_READY);
   });
 });

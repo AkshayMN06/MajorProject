@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import jwt, { SignOptions } from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
 import { env } from '../config/env';
 import { authenticate, AuthRequest } from '../middleware/auth';
@@ -23,7 +23,7 @@ router.post('/register', async (req: Request, res: Response) => {
       data: { email, password: hashedPassword, name, usn, department, semester, college },
     });
 
-    const token = jwt.sign({ id: user.id }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN });
+    const token = jwt.sign({ id: user.id }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN as SignOptions['expiresIn'] });
     const { password: _, ...userWithoutPass } = user;
 
     res.status(201).json({ success: true, data: { user: userWithoutPass, token } });
@@ -46,7 +46,7 @@ router.post('/login', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Invalid credentials' });
     }
 
-    const token = jwt.sign({ id: user.id }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN });
+    const token = jwt.sign({ id: user.id }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN as SignOptions['expiresIn'] });
     const { password: _, ...userWithoutPass } = user;
 
     res.json({ success: true, data: { user: userWithoutPass, token } });

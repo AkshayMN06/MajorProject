@@ -21,7 +21,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 router.get('/:id', async (req: AuthRequest, res: Response) => {
   try {
     const mod = await prisma.module.findUnique({
-      where: { id: req.params.id },
+      where: { id: String(req.params.id) },
       include: {
         lessons: {
           orderBy: { order: 'asc' }

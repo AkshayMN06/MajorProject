@@ -1,33 +1,51 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  mockFindUniqueScenario: vi.fn(),
-  mockFindUniqueSession: vi.fn(),
-  mockFindFirstRule: vi.fn(),
-  mockCountEvent: vi.fn(),
-  mockCreateEvent: vi.fn(),
-  mockCreateAttempt: vi.fn(),
-  mockFindManyAttempt: vi.fn(),
-  mockCountAttempt: vi.fn(),
-  mockFindFirstAnalytics: vi.fn(),
-  mockCreateAnalytics: vi.fn(),
-  mockUpdateAnalytics: vi.fn(),
+  scenario: { findUnique: vi.fn() },
+  session: { findUnique: vi.fn() },
+  rule: { findUnique: vi.fn(), findFirst: vi.fn() },
+  event: { count: vi.fn(), create: vi.fn() },
+  attempt: { create: vi.fn(), findMany: vi.fn(), count: vi.fn() },
+  score: { create: vi.fn() },
+  analytics: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
 }));
 
-vi.mock('@prisma/client', () => {
-  const mockPrisma = {
-    scenario: { findUnique: mocks.mockFindUniqueScenario },
-    session: { findUnique: mocks.mockFindUniqueSession },
-    rule: { findFirst: mocks.mockFindFirstRule },
-    event: { count: mocks.mockCountEvent, create: mocks.mockCreateEvent },
-    attempt: { create: mocks.mockCreateAttempt, findMany: mocks.mockFindManyAttempt, count: mocks.mockCountAttempt },
-    analytics: { findFirst: mocks.mockFindFirstAnalytics, create: mocks.mockCreateAnalytics, update: mocks.mockUpdateAnalytics },
-  };
-  return { PrismaClient: vi.fn(() => mockPrisma) };
-});
+vi.mock('@prisma/client', () => ({
+  PrismaClient: vi.fn(() => mocks),
+}));
 
 import { RuleEngine } from '../../src/services/ruleEngine';
 const ruleEngine = new RuleEngine();
+
+const scenario = {
+  id: 'scen1',
+  category: 'NetSec',
+  attackOptions: [{ id: 'atk', name: 'Attack', description: 'An attack.' }],
+  defenseOptions: [{ id: 'def', name: 'Defense', description: 'A defense.' }],
+};
+
+const evaluateInput = {
+  sessionId: 'sess1',
+  scenarioId: 'scen1',
+  attackerId: 'attacker-1',
+  defenderId: 'defender-1',
+  attackerChoice: 'atk',
+  defenderChoice: 'def',
+  attackerTimeTaken: 20,
+  defenderTimeTaken: 20,
+};
+
+// Defaults shared by every case: valid scenario, in-progress session, no
+// prior attempt history, no existing analytics row. Each test only needs to
+// set the Rule outcome (and findFirst for the recommended-control lookup).
+function mockHappyPathCollaborators() {
+  mocks.scenario.findUnique.mockResolvedValue(scenario);
+  mocks.session.findUnique.mockResolvedValue({ id: 'sess1', status: 'IN_PROGRESS' });
+  mocks.event.count.mockResolvedValue(0);
+  mocks.attempt.findMany.mockResolvedValue([]);
+  mocks.attempt.count.mockResolvedValue(0);
+  mocks.analytics.findFirst.mockResolvedValue(null);
+}
 
 describe('Scenario Flow Integration Tests', () => {
   beforeEach(() => {
@@ -35,86 +53,79 @@ describe('Scenario Flow Integration Tests', () => {
   });
 
   it('Full defended flow', async () => {
-    mocks.mockFindUniqueScenario.mockResolvedValue({ id: 'scen1', category: 'NetSec' });
-    mocks.mockFindUniqueSession.mockResolvedValue({ id: 'sess1', defenderId: 'u1', status: 'IN_PROGRESS' });
-    mocks.mockFindFirstRule.mockResolvedValue({ outcome: 'defended', explanation: 'Good job.' });
-    mocks.mockCountEvent.mockResolvedValue(0);
-    mocks.mockFindManyAttempt.mockResolvedValue([]);
-    mocks.mockCountAttempt.mockResolvedValue(0);
-    mocks.mockFindFirstAnalytics.mockResolvedValue(null);
+    mockHappyPathCollaborators();
+    mocks.rule.findUnique.mockResolvedValue({ outcome: 'defended', explanation: 'Good job.' });
 
-    const result = await ruleEngine.evaluate('sess1', 'scen1', 'atk', 'def', {}, {}, 20);
+    const result = await ruleEngine.evaluate(evaluateInput);
 
     expect(result.outcome).toBe('defended');
-    expect(result.scoreBreakdown.total).toBeGreaterThan(0);
-    expect(result.explanation).toMatch(/^Success!/);
-    expect(mocks.mockCreateEvent).toHaveBeenCalledTimes(1);
-    expect(mocks.mockCreateAttempt).toHaveBeenCalledTimes(1);
-    expect(mocks.mockCreateAnalytics).toHaveBeenCalledTimes(1);
+    expect(result.defenderScoreBreakdown.total).toBeGreaterThan(0);
+    expect(result.explanation).toMatch(/^Outcome: Defended\./);
+    expect(mocks.event.create).toHaveBeenCalledTimes(1);
+    expect(mocks.attempt.create).toHaveBeenCalledTimes(2);
+    expect(mocks.analytics.create).toHaveBeenCalledTimes(2);
   });
 
   it('Full breached flow', async () => {
-    mocks.mockFindUniqueScenario.mockResolvedValue({ id: 'scen1', category: 'NetSec' });
-    mocks.mockFindUniqueSession.mockResolvedValue({ id: 'sess1', defenderId: 'u1', status: 'IN_PROGRESS' });
-    mocks.mockFindFirstRule.mockResolvedValue({ outcome: 'breached', explanation: 'Failed.' });
-    mocks.mockCountEvent.mockResolvedValue(0);
-    mocks.mockFindManyAttempt.mockResolvedValue([]);
-    mocks.mockCountAttempt.mockResolvedValue(0);
-    mocks.mockFindFirstAnalytics.mockResolvedValue(null);
+    mockHappyPathCollaborators();
+    mocks.rule.findUnique.mockResolvedValue({ outcome: 'breached', explanation: 'Failed.' });
+    mocks.rule.findFirst.mockResolvedValue(null); // no recommended-control row seeded for this pairing
 
-    const result = await ruleEngine.evaluate('sess1', 'scen1', 'atk', 'def', {}, {}, 100);
+    const result = await ruleEngine.evaluate(evaluateInput);
 
     expect(result.outcome).toBe('breached');
-    expect(result.scoreBreakdown.correctDefense).toBe(0);
-    expect(result.explanation).toMatch(/^Breach Detected\./);
+    expect(result.defenderScoreBreakdown.correctChoice).toBe(0);
+    expect(result.explanation).toMatch(/^Outcome: Breached\./);
   });
 
   it('Partial defense flow', async () => {
-    mocks.mockFindUniqueScenario.mockResolvedValue({ id: 'scen1', category: 'NetSec' });
-    mocks.mockFindUniqueSession.mockResolvedValue({ id: 'sess1', defenderId: 'u1', status: 'IN_PROGRESS' });
-    mocks.mockFindFirstRule.mockResolvedValue({ outcome: 'partially_defended', explanation: 'Okay.' });
-    mocks.mockCountEvent.mockResolvedValue(0);
-    mocks.mockFindManyAttempt.mockResolvedValue([]);
-    mocks.mockCountAttempt.mockResolvedValue(0);
-    mocks.mockFindFirstAnalytics.mockResolvedValue(null);
+    mockHappyPathCollaborators();
+    mocks.rule.findUnique.mockResolvedValue({ outcome: 'partially_defended', explanation: 'Okay.' });
+    mocks.rule.findFirst.mockResolvedValue(null);
 
-    const result = await ruleEngine.evaluate('sess1', 'scen1', 'atk', 'def', {}, {}, 45);
+    const result = await ruleEngine.evaluate(evaluateInput);
 
     expect(result.outcome).toBe('partially_defended');
-    expect(result.scoreBreakdown.correctDefense).toBe(15);
+    expect(result.defenderScoreBreakdown.correctChoice).toBe(25);
   });
 
   it('No rule found fallback', async () => {
-    mocks.mockFindUniqueScenario.mockResolvedValue({ id: 'scen1', category: 'NetSec' });
-    mocks.mockFindUniqueSession.mockResolvedValue({ id: 'sess1', defenderId: 'u1', status: 'IN_PROGRESS' });
-    mocks.mockFindFirstRule.mockResolvedValue(null);
-    mocks.mockCountEvent.mockResolvedValue(0);
-    mocks.mockFindManyAttempt.mockResolvedValue([]);
-    mocks.mockCountAttempt.mockResolvedValue(0);
-    mocks.mockFindFirstAnalytics.mockResolvedValue(null);
+    mockHappyPathCollaborators();
+    mocks.rule.findUnique.mockResolvedValue(null); // no explicit Rule row for this pairing
+    mocks.rule.findFirst.mockResolvedValue(null);
 
-    const result = await ruleEngine.evaluate('sess1', 'scen1', 'atk', 'def', {}, {}, 50);
+    const result = await ruleEngine.evaluate(evaluateInput);
 
     expect(result.outcome).toBe('breached');
   });
 
   it('Invalid session', async () => {
-    mocks.mockFindUniqueScenario.mockResolvedValue({ id: 'scen1', category: 'NetSec' });
-    mocks.mockFindUniqueSession.mockResolvedValue(null);
+    mocks.scenario.findUnique.mockResolvedValue(scenario);
+    mocks.session.findUnique.mockResolvedValue(null);
 
-    await expect(ruleEngine.evaluate('sess1', 'scen1', 'atk', 'def', {}, {}, 50)).rejects.toThrow('Session sess1 not found');
+    await expect(ruleEngine.evaluate(evaluateInput)).rejects.toThrow('Session sess1 not found');
   });
 
   it('Invalid scenario', async () => {
-    mocks.mockFindUniqueScenario.mockResolvedValue(null);
+    mocks.scenario.findUnique.mockResolvedValue(null);
 
-    await expect(ruleEngine.evaluate('sess1', 'scenX', 'atk', 'def', {}, {}, 50)).rejects.toThrow('Scenario scenX not found');
+    await expect(ruleEngine.evaluate(evaluateInput)).rejects.toThrow('Scenario scen1 not found');
   });
 
   it('Completed session', async () => {
-    mocks.mockFindUniqueScenario.mockResolvedValue({ id: 'scen1', category: 'NetSec' });
-    mocks.mockFindUniqueSession.mockResolvedValue({ id: 'sess1', defenderId: 'u1', status: 'SESSION_COMPLETE' });
+    mocks.scenario.findUnique.mockResolvedValue(scenario);
+    mocks.session.findUnique.mockResolvedValue({ id: 'sess1', status: 'ASSESSMENT_COMPLETE' });
 
-    await expect(ruleEngine.evaluate('sess1', 'scen1', 'atk', 'def', {}, {}, 50)).rejects.toThrow('Session is already complete');
+    await expect(ruleEngine.evaluate(evaluateInput)).rejects.toThrow('Session is already complete');
+  });
+
+  it('Invalid attack choice is rejected before touching the Rule table', async () => {
+    mocks.scenario.findUnique.mockResolvedValue(scenario);
+    mocks.session.findUnique.mockResolvedValue({ id: 'sess1', status: 'IN_PROGRESS' });
+
+    await expect(ruleEngine.evaluate({ ...evaluateInput, attackerChoice: 'not-a-real-option' })).rejects.toThrow(
+      'Invalid attack choice: not-a-real-option'
+    );
+    expect(mocks.rule.findUnique).not.toHaveBeenCalled();
   });
 });

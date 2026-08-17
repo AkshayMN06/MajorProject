@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { buildLearningOutcomes } from './learningOutcomes';
 
 const prisma = new PrismaClient();
 
@@ -109,6 +110,26 @@ export async function buildAssessmentReport(sessionId: string) {
   const defenderAccuracy = totalRounds > 0 ? Math.round((defenderWins / totalRounds) * 100) : 0;
   const attackerAccuracy = totalRounds > 0 ? Math.round((attackerWins / totalRounds) * 100) : 0;
 
+  // Learning Outcomes — Pre-test/Post-test, computed server-side per user
+  // from their own QuizAttempt/QuizResponse rows (never trusts a client-
+  // supplied score). These are one-time, account-level checkpoints, not
+  // scoped to this session — see learningOutcomes.ts.
+  const emptyLearningOutcomes = {
+    hasPreTest: false,
+    hasPostTest: false,
+    preTestScore: null,
+    postTestScore: null,
+    learningGain: null,
+    learningGainPercent: null,
+    modulePerformance: [],
+    weakTopics: [],
+    recommendations: [],
+  };
+  const [attackerLearningOutcomes, defenderLearningOutcomes] = await Promise.all([
+    buildLearningOutcomes(prisma, session.attackerId),
+    session.defenderId ? buildLearningOutcomes(prisma, session.defenderId) : Promise.resolve(emptyLearningOutcomes),
+  ]);
+
   const rounds = Array.from(
     new Set(scores.map((s) => s.roundNumber).filter((r): r is number => r != null))
   ).sort((a, b) => a - b);
@@ -151,6 +172,8 @@ export async function buildAssessmentReport(sessionId: string) {
     defenderWeakTopics,
     attackerRecommendations,
     defenderRecommendations,
+    attackerLearningOutcomes,
+    defenderLearningOutcomes,
     performanceTimeline,
     events: events.map((e) => ({
       turnId: e.turnId,

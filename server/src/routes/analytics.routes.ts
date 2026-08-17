@@ -42,4 +42,13 @@ router.get('/categories', async (req: AuthRequest, res: Response) => {
   }
 });
 
+router.get('/activity', async (req: AuthRequest, res: Response) => {
+  try {
+    const data = await AnalyticsEngine.getRecentActivity(req.user.id);
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;

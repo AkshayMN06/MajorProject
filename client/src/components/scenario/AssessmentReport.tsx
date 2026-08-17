@@ -1,11 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Trophy, Target, Shield, BarChart2, TrendingUp, TrendingDown,
-  BookOpen, Download, RefreshCw, CheckCircle, XCircle, MinusCircle, Lightbulb
+  BookOpen, Download, RefreshCw, CheckCircle, XCircle, MinusCircle, Lightbulb, GraduationCap,
+  FileSpreadsheet, Loader2
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import type { AssessmentReport as ReportType } from '../../hooks/useScenarioSession';
+import { exportApi } from '../../services/api';
 
 interface AssessmentReportProps {
   report: ReportType;
@@ -18,6 +20,30 @@ const AssessmentReport: React.FC<AssessmentReportProps> = ({ report, role, onRes
   const partnerScore = role === 'attacker' ? report.defenderFinalScore : report.attackerFinalScore;
   const myName = role === 'attacker' ? report.attackerName : report.defenderName;
   const partnerName = role === 'attacker' ? report.defenderName : report.attackerName;
+  const myLearningOutcomes = role === 'attacker' ? report.attackerLearningOutcomes : report.defenderLearningOutcomes;
+
+  const [downloadingCsv, setDownloadingCsv] = useState<string | null>(null);
+
+  const handleCsvDownload = async (
+    key: string,
+    fetcher: (sessionId: string) => Promise<{ data: Blob }>,
+    filename: string
+  ) => {
+    setDownloadingCsv(key);
+    try {
+      const response = await fetcher(report.sessionId);
+      const url = URL.createObjectURL(new Blob([response.data], { type: 'text/csv' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(`Failed to download ${filename}`, err);
+    } finally {
+      setDownloadingCsv(null);
+    }
+  };
 
   const handleDownload = () => {
     const lines = [
@@ -39,6 +65,17 @@ const AssessmentReport: React.FC<AssessmentReportProps> = ({ report, role, onRes
       `Defended (Defender wins): ${report.defenderWins}`,
       `Breached (Attacker wins): ${report.attackerWins}`,
       `Partial: ${report.partials}`,
+      '',
+      'LEARNING OUTCOMES (your role)',
+      myLearningOutcomes.hasPreTest ? `  Pre-test Score: ${myLearningOutcomes.preTestScore}%` : '  Pre-test Score: Not completed',
+      myLearningOutcomes.hasPostTest ? `  Post-test Score: ${myLearningOutcomes.postTestScore}%` : '  Post-test Score: Not completed',
+      myLearningOutcomes.learningGain !== null
+        ? `  Learning Gain: ${myLearningOutcomes.learningGain >= 0 ? '+' : ''}${myLearningOutcomes.learningGain}pp (${myLearningOutcomes.learningGainPercent! >= 0 ? '+' : ''}${myLearningOutcomes.learningGainPercent}% relative)`
+        : '  Learning Gain: Not available (complete both tests)',
+      ...(myLearningOutcomes.modulePerformance.length > 0
+        ? ['  Module Performance:', ...myLearningOutcomes.modulePerformance.map(m => `    ${m.moduleTag}: Pre ${m.preAccuracy ?? '—'}% -> Post ${m.postAccuracy ?? '—'}%`)]
+        : []),
+      ...(myLearningOutcomes.weakTopics.length > 0 ? [`  Topics to Review: ${myLearningOutcomes.weakTopics.join(', ')}`] : []),
       '',
       'ATTACKER — STRONG TOPICS',
       report.attackerStrongTopics.length > 0 ? report.attackerStrongTopics.join(', ') : 'None identified',
@@ -197,6 +234,118 @@ const AssessmentReport: React.FC<AssessmentReportProps> = ({ report, role, onRes
           ))}
         </motion.div>
 
+        {/* Learning Outcomes — Pre-test / Post-test */}
+        <motion.div variants={itemVariants} className="bg-[#0a0f1e] border border-[#1e293b] rounded-2xl p-6">
+          <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+            <GraduationCap size={15} className="text-indigo-400" />
+            Learning Outcomes
+          </h3>
+
+          {!myLearningOutcomes.hasPreTest && !myLearningOutcomes.hasPostTest ? (
+            <p className="text-sm text-gray-500">
+              Complete a Pre-test and Post-test to see your learning outcomes here.
+            </p>
+          ) : (
+            <div className="space-y-5">
+              {/* Pre-test / Post-test scores */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-[#0f1629]/60 border border-[#1e293b] rounded-xl p-4 text-center">
+                  <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Pre-test Score</p>
+                  <p className="text-2xl font-bold text-white">
+                    {myLearningOutcomes.hasPreTest ? `${myLearningOutcomes.preTestScore}%` : '—'}
+                  </p>
+                  {!myLearningOutcomes.hasPreTest && <p className="text-[10px] text-gray-600 mt-1">Not completed</p>}
+                </div>
+                <div className="bg-[#0f1629]/60 border border-[#1e293b] rounded-xl p-4 text-center">
+                  <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Post-test Score</p>
+                  <p className="text-2xl font-bold text-white">
+                    {myLearningOutcomes.hasPostTest ? `${myLearningOutcomes.postTestScore}%` : '—'}
+                  </p>
+                  {!myLearningOutcomes.hasPostTest && <p className="text-[10px] text-gray-600 mt-1">Not completed</p>}
+                </div>
+              </div>
+
+              {/* Learning Gain */}
+              {myLearningOutcomes.learningGain !== null && myLearningOutcomes.learningGainPercent !== null ? (
+                <div className="bg-[#0f1629]/60 border border-indigo-500/20 rounded-xl p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Learning Gain</p>
+                    <p className={`text-2xl font-bold ${myLearningOutcomes.learningGain >= 0 ? 'text-teal-400' : 'text-red-400'}`}>
+                      {myLearningOutcomes.learningGain >= 0 ? '+' : ''}{myLearningOutcomes.learningGain} pp
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Relative Change</p>
+                    <p className={`text-lg font-semibold ${myLearningOutcomes.learningGainPercent >= 0 ? 'text-teal-400' : 'text-red-400'}`}>
+                      {myLearningOutcomes.learningGainPercent >= 0 ? '+' : ''}{myLearningOutcomes.learningGainPercent}%
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-gray-500">
+                  {myLearningOutcomes.hasPreTest ? 'Complete the Post-test' : 'Complete the Pre-test and Post-test'} to see your Learning Gain.
+                </p>
+              )}
+
+              {/* Module Performance */}
+              {myLearningOutcomes.modulePerformance.length > 0 && (
+                <div>
+                  <p className="text-xs text-gray-500 uppercase tracking-wider font-medium mb-3">Module Performance</p>
+                  <div className="space-y-3">
+                    {myLearningOutcomes.modulePerformance.map((m) => (
+                      <div key={m.moduleTag}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs text-gray-400">{m.moduleTag}</span>
+                          <span className="text-xs font-semibold text-white">
+                            Pre {m.preAccuracy !== null ? `${m.preAccuracy}%` : '—'} &rarr; Post {m.postAccuracy !== null ? `${m.postAccuracy}%` : '—'}
+                          </span>
+                        </div>
+                        <div className="flex gap-1">
+                          <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                            <div className="h-full bg-gray-500 rounded-full" style={{ width: `${m.preAccuracy ?? 0}%` }} />
+                          </div>
+                          <div className="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                            <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${m.postAccuracy ?? 0}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Topics to Review */}
+              {myLearningOutcomes.weakTopics.length > 0 && (
+                <div className="bg-red-950/10 border border-red-500/20 rounded-xl p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <BookOpen size={14} className="text-red-400" />
+                    <span className="text-sm font-semibold text-red-400">Topics to Review</span>
+                  </div>
+                  <ul className="flex flex-wrap gap-2">
+                    {myLearningOutcomes.weakTopics.map((t) => (
+                      <li key={t} className="text-xs px-2 py-1 rounded border border-red-500/30 text-red-300 bg-red-500/10">
+                        {t}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Recommendations */}
+              {myLearningOutcomes.recommendations.length > 0 && (
+                <div className="space-y-2">
+                  {myLearningOutcomes.recommendations.map((rec) => (
+                    <div key={rec.title} className="bg-[#0f1629]/60 border border-[#1e293b] rounded-xl p-3">
+                      <p className="text-sm font-semibold text-white">{rec.title}</p>
+                      <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">{rec.description}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </motion.div>
+
         {/* Performance timeline */}
         {report.performanceTimeline.length > 0 && (
           <motion.div variants={itemVariants} className="bg-[#0a0f1e] border border-[#1e293b] rounded-2xl p-6">
@@ -322,6 +471,34 @@ const AssessmentReport: React.FC<AssessmentReportProps> = ({ report, role, onRes
             </ul>
           </motion.div>
         ))}
+
+        {/* CSV Data Export */}
+        <motion.div variants={itemVariants} className="bg-[#0a0f1e] border border-[#1e293b] rounded-2xl p-6">
+          <h3 className="text-sm font-semibold text-white mb-1 flex items-center gap-2">
+            <FileSpreadsheet size={15} className="text-indigo-400" />
+            Export Data
+          </h3>
+          <p className="text-xs text-gray-500 mb-4">
+            Raw CSV exports for this session, identified by participant ID rather than name.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {[
+              { key: 'events', label: 'Download Event Log CSV', fetcher: exportApi.downloadEventsCsv, filename: `events-${report.sessionId}.csv` },
+              { key: 'attempts', label: 'Download Learner Attempts CSV', fetcher: exportApi.downloadAttemptsCsv, filename: `attempts-${report.sessionId}.csv` },
+              { key: 'results', label: 'Download Assessment Results CSV', fetcher: exportApi.downloadResultsCsv, filename: `results-${report.sessionId}.csv` },
+            ].map(({ key, label, fetcher, filename }) => (
+              <button
+                key={key}
+                onClick={() => handleCsvDownload(key, fetcher, filename)}
+                disabled={downloadingCsv !== null}
+                className="flex items-center justify-center gap-2 py-3 rounded-xl border border-gray-700 text-gray-300 hover:bg-gray-800/50 disabled:opacity-50 transition-colors text-xs font-medium text-center"
+              >
+                {downloadingCsv === key ? <Loader2 size={14} className="animate-spin" /> : <FileSpreadsheet size={14} />}
+                {label}
+              </button>
+            ))}
+          </div>
+        </motion.div>
 
         {/* Actions */}
         <motion.div variants={itemVariants} className="flex gap-3">

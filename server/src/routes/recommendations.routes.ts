@@ -27,7 +27,7 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
 
 router.patch('/:id/complete', async (req: AuthRequest, res: Response) => {
   try {
-    const data = await RecommendationEngine.markCompleted(req.params.id);
+    const data = await RecommendationEngine.markCompleted(String(req.params.id));
     res.json({ success: true, data });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

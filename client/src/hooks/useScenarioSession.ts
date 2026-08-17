@@ -90,6 +90,29 @@ export interface ReportRecommendation {
   description: string;
 }
 
+export interface ModulePerformance {
+  moduleTag: string;
+  preAccuracy: number | null;
+  postAccuracy: number | null;
+}
+
+export interface LearningRecommendation {
+  title: string;
+  description: string;
+}
+
+export interface LearningOutcomes {
+  hasPreTest: boolean;
+  hasPostTest: boolean;
+  preTestScore: number | null;
+  postTestScore: number | null;
+  learningGain: number | null;
+  learningGainPercent: number | null;
+  modulePerformance: ModulePerformance[];
+  weakTopics: string[];
+  recommendations: LearningRecommendation[];
+}
+
 export interface AssessmentReport {
   sessionId: string;
   sessionCode: string;
@@ -112,6 +135,8 @@ export interface AssessmentReport {
   defenderWeakTopics: string[];
   attackerRecommendations: ReportRecommendation[];
   defenderRecommendations: ReportRecommendation[];
+  attackerLearningOutcomes: LearningOutcomes;
+  defenderLearningOutcomes: LearningOutcomes;
   performanceTimeline: PerformancePoint[];
   events: any[];
 }

@@ -2,6 +2,8 @@ import { PrismaClient } from '@prisma/client';
 import { scoreEngine, ScoreBreakdown } from './scoreEngine';
 import { EventLogger } from './eventLogger';
 import { AnalyticsEngine } from './analyticsEngine';
+import { resolveOutcome as resolveRuleOutcome } from './ruleResolver';
+import { buildFeedback, findRecommendedControl } from './feedbackBuilder';
 import { Outcome } from '../../../shared/types';
 
 const prisma = new PrismaClient();
@@ -46,7 +48,8 @@ export class RuleEngine {
     await this.globalRuleChecks(input.sessionId);
 
     // 4-7. Defense Rules -> Attack Rules -> Modifiers -> Outcome
-    const { outcome, explanation } = await this.resolveOutcome(
+    const { outcome, explanation } = await resolveRuleOutcome(
+      prisma,
       scenario.id,
       input.attackerChoice,
       input.defenderChoice
@@ -73,8 +76,27 @@ export class RuleEngine {
       choice: input.attackerChoice,
     });
 
-    // 9. Explanation
-    const finalExplanation = this.generateExplanation(outcome as Outcome, explanation);
+    // 9. Explanation — deterministically composed from the attack/defense
+    // names, the Rule record's specific reason, the concept/module, and
+    // (for breached/partially_defended) the recommended control. No LLM.
+    const attackOptions = (scenario.attackOptions as any[]) ?? [];
+    const defenseOptions = (scenario.defenseOptions as any[]) ?? [];
+    const attackName = attackOptions.find((a) => a.id === input.attackerChoice)?.name ?? input.attackerChoice;
+    const defenseName = defenseOptions.find((d) => d.id === input.defenderChoice)?.name ?? input.defenderChoice;
+
+    const recommendedControl =
+      outcome === 'defended'
+        ? null
+        : await findRecommendedControl(prisma, scenario.id, input.attackerChoice, defenseOptions);
+
+    const finalExplanation = buildFeedback({
+      outcome,
+      baseExplanation: explanation,
+      attackName,
+      defenseName,
+      concept: scenario.category,
+      recommendedControl,
+    });
 
     // 10. Event Log
     const turnId = (await prisma.event.count({ where: { sessionId: input.sessionId } })) + 1;
@@ -194,43 +216,6 @@ export class RuleEngine {
     }
     if (session.status === 'ASSESSMENT_COMPLETE') {
       throw new Error('Session is already complete');
-    }
-  }
-
-  /**
-   * Defense Rules -> Attack Rules -> Modifiers -> Outcome. The scenario's
-   * seeded Rule rows already encode the defense/attack pairing and its
-   * outcome.
-   */
-  private async resolveOutcome(scenarioId: string, attackerChoice: string, defenderChoice: string) {
-    const rule = await prisma.rule.findFirst({
-      where: {
-        scenarioId,
-        attackType: attackerChoice,
-        defenseType: defenderChoice,
-      },
-    });
-
-    if (rule) {
-      return {
-        outcome: rule.outcome,
-        explanation: rule.explanation,
-      };
-    }
-
-    return {
-      outcome: 'breached',
-      explanation: 'No specific countermeasure was found for this combination — the defense provided no protection against this attack.',
-    };
-  }
-
-  private generateExplanation(outcome: Outcome, baseExplanation: string): string {
-    if (outcome === Outcome.DEFENDED) {
-      return `Successfully defended. ${baseExplanation}`;
-    } else if (outcome === Outcome.PARTIALLY_DEFENDED) {
-      return `Partially defended. ${baseExplanation}`;
-    } else {
-      return `Breach occurred. ${baseExplanation}`;
     }
   }
 }

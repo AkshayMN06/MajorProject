@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { buildAssessmentReport } from './reportBuilder';
 
 const prisma = new PrismaClient();
 
@@ -39,6 +40,61 @@ export class AnalyticsEngine {
     }
   }
 
+  /**
+   * Writes one AssessmentSnapshot per participant, at the moment a full
+   * assessment finishes (called from sessionActions.advanceRound once the
+   * session transitions to ASSESSMENT_COMPLETE). This is what backs
+   * "Performance Over Time" and "Recent Activity" on the dashboard — the
+   * per-round updateAnalytics() above already keeps per-category totals
+   * current, but has no notion of a completed assessment or a date to plot.
+   * Reuses buildAssessmentReport() (the same source of truth as the on-screen
+   * report) for scoring, rather than recomputing it here.
+   */
+  static async recordAssessmentCompletion(sessionId: string) {
+    const session = await prisma.session.findUnique({ where: { id: sessionId } });
+    if (!session) return;
+
+    const report = await buildAssessmentReport(sessionId);
+    if (!report) return;
+
+    const participants: { userId: string; role: 'attacker' | 'defender'; finalScore: number; accuracy: number }[] = [
+      { userId: session.attackerId, role: 'attacker', finalScore: report.attackerFinalScore, accuracy: report.attackerAccuracy },
+    ];
+    if (session.defenderId) {
+      participants.push({
+        userId: session.defenderId,
+        role: 'defender',
+        finalScore: report.defenderFinalScore,
+        accuracy: report.defenderAccuracy,
+      });
+    }
+
+    for (const p of participants) {
+      // Event.timeTaken is always the defender's time (see ruleEngine.ts),
+      // so role-specific timing has to come from this participant's own
+      // Attempt rows instead.
+      const attempts = await prisma.attempt.findMany({ where: { sessionId, userId: p.userId, role: p.role } });
+      const successOutcome = p.role === 'attacker' ? 'breached' : 'defended';
+      const correctRounds = attempts.filter((a) => a.outcome === successOutcome).length;
+      const averageTime = attempts.length > 0 ? attempts.reduce((sum, a) => sum + a.timeTaken, 0) / attempts.length : 0;
+
+      await prisma.assessmentSnapshot.create({
+        data: {
+          userId: p.userId,
+          sessionId,
+          role: p.role,
+          module: session.module,
+          totalRounds: report.totalRounds,
+          finalScore: p.finalScore,
+          accuracy: p.accuracy,
+          correctRounds,
+          incorrectRounds: attempts.length - correctRounds,
+          averageTime,
+        },
+      });
+    }
+  }
+
   static async getUserAnalytics(userId: string) {
     return prisma.analytics.findMany({
       where: { userId },
@@ -66,6 +122,38 @@ export class AnalyticsEngine {
       totalTime += (a.averageTime * a.totalAttempts);
     });
 
+    // Week-over-week accuracy: compares the average AssessmentSnapshot
+    // accuracy in the last 7 days against the 7 days before that. Either
+    // side is null (not a misleading 0) when there isn't enough history yet.
+    const now = new Date();
+    const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+
+    const [thisWeek, lastWeek] = await Promise.all([
+      prisma.assessmentSnapshot.findMany({ where: { userId, completedAt: { gte: oneWeekAgo } } }),
+      prisma.assessmentSnapshot.findMany({ where: { userId, completedAt: { gte: twoWeeksAgo, lt: oneWeekAgo } } }),
+    ]);
+    const avgAccuracy = (rows: { accuracy: number }[]) =>
+      rows.length > 0 ? rows.reduce((sum, r) => sum + r.accuracy, 0) / rows.length : null;
+    const thisWeekAvg = avgAccuracy(thisWeek);
+    const lastWeekAvg = avgAccuracy(lastWeek);
+    const accuracyChangeVsLastWeek =
+      thisWeekAvg !== null && lastWeekAvg !== null ? Math.round(thisWeekAvg - lastWeekAvg) : null;
+
+    // Response-time distribution from recent individual round attempts —
+    // the Analytics table only stores a per-category running average, not
+    // enough to derive fastest/median/slowest.
+    const recentAttempts = await prisma.attempt.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: { timeTaken: true },
+    });
+    const times = recentAttempts.map((a) => a.timeTaken).sort((a, b) => a - b);
+    const responseTimeStats = times.length > 0
+      ? { fastest: times[0], median: times[Math.floor(times.length / 2)], slowest: times[times.length - 1] }
+      : null;
+
     return {
       totalSessions: sessions,
       scenariosAttempted: totalAttempts,
@@ -73,28 +161,27 @@ export class AnalyticsEngine {
       incorrectDecisions: totalAttempts - correctAttempts,
       averageScore: totalAttempts > 0 ? (correctAttempts / totalAttempts) * 100 : 0,
       averageResponseTime: totalAttempts > 0 ? totalTime / totalAttempts : 0,
-      weekOverWeek: {
-        sessions: 0,
-        scenarios: 0,
-        correct: 0,
-        incorrect: 0,
-      } // simplified placeholder
+      accuracyChangeVsLastWeek,
+      responseTimeStats,
     };
   }
 
-  static async getPerformanceTrends(userId: string, days = 7) {
-    // simplified trend generation for demo
-    const trends = [];
-    for (let i = days - 1; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      trends.push({
-        date: date.toISOString().split('T')[0],
-        accuracy: Math.random() * 40 + 60, // random data
-        responseTime: Math.random() * 30 + 10,
-      });
-    }
-    return trends;
+  /**
+   * One point per completed assessment (not per calendar day — a learner may
+   * complete zero or several assessments on a given day), oldest first, for
+   * the "Performance Over Time" chart.
+   */
+  static async getPerformanceTrends(userId: string, limit = 10) {
+    const snapshots = await prisma.assessmentSnapshot.findMany({
+      where: { userId },
+      orderBy: { completedAt: 'asc' },
+      take: limit,
+    });
+    return snapshots.map((s) => ({
+      date: s.completedAt.toISOString().split('T')[0],
+      accuracy: Math.round(s.accuracy),
+      responseTime: Math.round(s.averageTime),
+    }));
   }
 
   static async getCategoryAccuracy(userId: string) {
@@ -103,5 +190,30 @@ export class AnalyticsEngine {
       category: a.category,
       accuracy: a.accuracy,
     }));
+  }
+
+  /**
+   * Most recent individual scenario rounds (not assessments) — one row per
+   * Attempt — for the "Recent Activity" table.
+   */
+  static async getRecentActivity(userId: string, limit = 10) {
+    const attempts = await prisma.attempt.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      include: { scenario: true },
+    });
+    return attempts.map((a) => {
+      const successOutcome = a.role === 'attacker' ? 'breached' : 'defended';
+      const accuracy = a.outcome === successOutcome ? 100 : a.outcome === 'partially_defended' ? 50 : 0;
+      return {
+        id: a.id,
+        date: a.createdAt.toISOString().split('T')[0],
+        scenario: a.scenario.name,
+        role: a.role,
+        accuracy,
+        time: a.timeTaken,
+      };
+    });
   }
 }

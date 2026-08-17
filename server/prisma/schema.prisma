@@ -31,6 +31,8 @@ model User {
   scores           Score[]
   recommendations  Recommendation[]
   analytics        Analytics[]
+  quizAttempts     QuizAttempt[]
+  assessmentSnapshots AssessmentSnapshot[]
 
   @@map("users")
 }
@@ -59,6 +61,7 @@ model Session {
   attempts Attempt[]
   events   Event[]
   scores   Score[]
+  assessmentSnapshots AssessmentSnapshot[]
 
   @@map("sessions")
 }
@@ -92,6 +95,10 @@ model Rule {
 
   scenario Scenario @relation(fields: [scenarioId], references: [id])
 
+  // Guarantees at most one rule row per (scenario, attack, defense) pairing,
+  // so runtime resolution can use findUnique (a guaranteed single row or
+  // none) instead of findFirst (which does not rule out duplicates).
+  @@unique([scenarioId, attackType, defenseType])
   @@map("rules")
 }
 
@@ -153,6 +160,31 @@ model Score {
   @@map("scores")
 }
 
+// One row per (user, completed session) — written once, at the moment an
+// assessment finishes (see sessionActions.advanceRound). This is what backs
+// "Performance Over Time" and "Recent Activity" on the Analytics dashboard;
+// the Analytics model above is a rolling per-category total updated every
+// round, so it has no notion of individual completed assessments or dates.
+model AssessmentSnapshot {
+  id              String   @id @default(cuid())
+  userId          String
+  sessionId       String
+  role            String // 'attacker' | 'defender'
+  module          String?
+  totalRounds     Int
+  finalScore      Int
+  accuracy        Float // % of this role's rounds that were a "win" (breached for attacker, defended for defender)
+  correctRounds   Int
+  incorrectRounds Int
+  averageTime     Float
+  completedAt     DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id])
+  session Session @relation(fields: [sessionId], references: [id])
+
+  @@map("assessment_snapshots")
+}
+
 model Recommendation {
   id          String   @id @default(cuid())
   userId      String
@@ -182,6 +214,64 @@ model Analytics {
   user User @relation(fields: [userId], references: [id])
 
   @@map("analytics")
+}
+
+// Pre-test / Post-test assessment content. Two parallel forms (PRE_A,
+// POST_B) so the post-test isn't just the learner re-answering questions
+// they already saw. `correctOption` and `explanation` are never sent to the
+// client until after an attempt is submitted (see quiz.routes.ts).
+model Question {
+  id            String  @id @default(cuid())
+  questionId    String  @unique // stable external id from the source data (e.g. "q1", "app3")
+  question      String
+  optionA       String
+  optionB       String
+  optionC       String
+  optionD       String
+  correctOption String // 'A' | 'B' | 'C' | 'D'
+  topic         String
+  moduleTag     String // one of the 5 platform modules — Web Security, Network Security, System Security, Social Engineering, Cryptography
+  topicTag      String // normalized topic, e.g. "SQL Injection"
+  difficulty    String // 'Easy' | 'Medium' | 'Hard'
+  testForm      String // 'PRE_A' | 'POST_B'
+  explanation   String // shown in the Learning Summary review, win or lose
+  isActive      Boolean @default(true)
+
+  responses QuizResponse[]
+
+  @@map("questions")
+}
+
+model QuizAttempt {
+  id             String    @id @default(cuid())
+  userId         String
+  testType       String // 'PRE' | 'POST'
+  testForm       String // 'PRE_A' | 'POST_B'
+  status         String    @default("in_progress") // 'in_progress' | 'completed'
+  score          Int? // correct-answer count, computed server-side on submit
+  totalQuestions Int
+  startedAt      DateTime  @default(now())
+  completedAt    DateTime?
+
+  user      User           @relation(fields: [userId], references: [id])
+  responses QuizResponse[]
+
+  @@map("quiz_attempts")
+}
+
+model QuizResponse {
+  id             String   @id @default(cuid())
+  attemptId      String
+  questionId     String
+  selectedOption String // 'A' | 'B' | 'C' | 'D'
+  isCorrect      Boolean
+  createdAt      DateTime @default(now())
+
+  attempt  QuizAttempt @relation(fields: [attemptId], references: [id])
+  question Question    @relation(fields: [questionId], references: [id])
+
+  @@unique([attemptId, questionId])
+  @@map("quiz_responses")
 }
 
 model Module {

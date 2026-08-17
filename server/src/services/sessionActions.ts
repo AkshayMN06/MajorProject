@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { ruleEngine } from './ruleEngine';
 import { RecommendationEngine } from './recommendationEngine';
+import { AnalyticsEngine } from './analyticsEngine';
 import { transition, transitionThrough, SessionState } from './stateMachine';
 
 const prisma = new PrismaClient();
@@ -248,9 +249,11 @@ export async function advanceRound(sessionId: string, userId: string) {
     });
     roomStates.delete(sessionId);
 
-    // Recommendation step — once per completed assessment, not per round.
+    // Recommendation + analytics-snapshot steps — once per completed
+    // assessment, not per round.
     await RecommendationEngine.generateRecommendations(session.attackerId);
     if (session.defenderId) await RecommendationEngine.generateRecommendations(session.defenderId);
+    await AnalyticsEngine.recordAssessmentCompletion(sessionId);
 
     return { complete: true as const, sessionId };
   }
