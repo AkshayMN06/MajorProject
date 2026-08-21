@@ -1,5 +1,5 @@
 export interface QuizQuestionSeed {
-  questionId: string;
+  questionId: string; // stable external id, e.g. "web-easy-7"
   question: string;
   optionA: string;
   optionB: string;
@@ -10,7 +10,14 @@ export interface QuizQuestionSeed {
   moduleTag: string;
   topicTag: string;
   difficulty: 'Easy' | 'Medium' | 'Hard';
-  testForm: 'PRE_A' | 'POST_B';
   explanation: string;
   isActive: boolean;
+}
+
+// Exactly 50 questions per difficulty tier — 150 per module file, 750 total
+// across all 5 modules.
+export interface QuizModuleSeed {
+  Easy: QuizQuestionSeed[];
+  Medium: QuizQuestionSeed[];
+  Hard: QuizQuestionSeed[];
 }

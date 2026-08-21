@@ -2,12 +2,12 @@ import { z } from 'zod';
 
 export const quizQuestionsQuerySchema = z.object({
   body: z.object({}).optional(),
-  query: z.object({ testType: z.enum(['PRE', 'POST']) }),
+  query: z.object({ testType: z.enum(['PRE', 'POST']), sessionId: z.string().min(1) }),
   params: z.object({}).optional(),
 });
 
 export const quizStartSchema = z.object({
-  body: z.object({ testType: z.enum(['PRE', 'POST']) }),
+  body: z.object({ testType: z.enum(['PRE', 'POST']), sessionId: z.string().min(1) }),
   query: z.object({}).optional(),
   params: z.object({}).optional(),
 });

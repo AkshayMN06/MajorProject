@@ -15,6 +15,7 @@ export interface User {
   location?: string;
   preferredRole?: string;
   timezone?: string;
+  role?: string; // 'USER' | 'ADMIN'
   createdAt: string;
 }
 

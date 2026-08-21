@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { AlertCircle, X, ClipboardList, Loader2 } from 'lucide-react';
+import { AlertCircle, X, Loader2 } from 'lucide-react';
 
 import { useScenarioSession } from '../hooks/useScenarioSession';
 import { quizApi } from '../services/api';
@@ -11,28 +10,8 @@ import AttackerView from '../components/scenario/AttackerView';
 import DefenderView from '../components/scenario/DefenderView';
 import ResultPanel from '../components/scenario/ResultPanel';
 import AssessmentReport from '../components/scenario/AssessmentReport';
+import PreTestPage from './PreTestPage';
 import PostTestPage from './PostTestPage';
-
-// ─── Pre-test gate ───────────────────────────────────────────────────────────
-const PreTestRequiredGate: React.FC<{ onStart: () => void }> = ({ onStart }) => (
-  <div className="min-h-screen bg-cyber-bg-dark flex items-center justify-center p-4">
-    <div className="max-w-md w-full text-center bg-[#0f1629]/80 border border-indigo-500/20 rounded-2xl p-8">
-      <div className="inline-flex items-center justify-center p-3 bg-indigo-500/10 rounded-2xl border border-indigo-500/20 mb-5">
-        <ClipboardList className="w-7 h-7 text-indigo-400" />
-      </div>
-      <h2 className="text-xl font-bold text-white mb-2">Pre-test Required</h2>
-      <p className="text-sm text-gray-400 leading-relaxed mb-6">
-        Complete a short Pre-test before starting a Scenario Assessment session — it establishes your baseline knowledge.
-      </p>
-      <button
-        onClick={onStart}
-        className="w-full py-3.5 rounded-xl bg-indigo-600/90 hover:bg-indigo-600 text-white text-sm font-semibold transition-colors shadow-[0_0_20px_rgba(99,102,241,0.3)]"
-      >
-        Start Pre-test
-      </button>
-    </div>
-  </div>
-);
 
 const CenteredSpinner: React.FC = () => (
   <div className="min-h-screen bg-cyber-bg-dark flex items-center justify-center">
@@ -62,53 +41,84 @@ export const ScenarioPage: React.FC = () => {
     state,
     createSession,
     joinSession,
+    rehydrateActiveSession,
     markReady,
     submitAttack,
     submitDefense,
     continueToNextRound,
+    refreshReport,
     reset,
     clearError,
   } = useScenarioSession();
 
-  const navigate = useNavigate();
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin] = useState(false);
 
   const { phase, role, scenario } = state;
 
-  // ── Pre-test gate: checked whenever the landing screen would show ────────
+  // ── Resume check: once on mount, before the landing screen shows, so a
+  // hard refresh during the Pre-Test/Post-Test window rehydrates the live
+  // session/report instead of dropping the user back at a bare landing page.
+  const [resumeStatus, setResumeStatus] = useState<'checking' | 'done'>('checking');
+  useEffect(() => {
+    let cancelled = false;
+    rehydrateActiveSession().finally(() => {
+      if (!cancelled) setResumeStatus('done');
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Pre-test gate: every session's own attempt, checked exactly once per
+  // sessionId (not re-checked on every phase change, which previously
+  // caused the gate to flicker/re-ask as the waiting room toggled between
+  // "waiting for participant" and "waiting room" states). Never gated on
+  // account history, so a returning user gets a fresh Pre-test for every
+  // new session just like a first-time user. The gate itself is only shown
+  // once round-play is about to begin (both players readied up) — see the
+  // round-1 phases below — not during the waiting room.
   const [preTestStatus, setPreTestStatus] = useState<'checking' | 'required' | 'done'>('checking');
   useEffect(() => {
-    if (phase !== 'landing') return;
+    if (!state.sessionId) return;
     let cancelled = false;
     setPreTestStatus('checking');
     quizApi
-      .getQuestions('PRE')
-      .then(({ completedAttempt }) => {
-        if (!cancelled) setPreTestStatus(completedAttempt ? 'done' : 'required');
+      .getQuestions('PRE', state.sessionId)
+      .then(({ existingAttempt }) => {
+        if (!cancelled) setPreTestStatus(existingAttempt?.status === 'completed' ? 'done' : 'required');
       })
       .catch(() => {
         if (!cancelled) setPreTestStatus('required');
       });
     return () => { cancelled = true; };
-  }, [phase]);
+  }, [state.sessionId]);
 
-  // ── Post-test gate: checked once the assessment reaches its final report ─
+  // Only round 1's pre-play phases are eligible to show the Pre-test gate —
+  // once past round 1 the gate must already be resolved, and the waiting
+  // room (before both players are ready) never shows it.
+  const isFirstRoundEntry =
+    state.currentRound === 1 &&
+    (phase === 'attack_selection' || phase === 'waiting_for_defense' || phase === 'defense_selection' || phase === 'waiting_for_result');
+
+  // ── Post-test gate: this session's own attempt, checked once the
+  // assessment reaches its final report — same never-skip-for-returning-
+  // users rule as the Pre-test gate above.
   const [postTestStatus, setPostTestStatus] = useState<'checking' | 'required' | 'done'>('checking');
   useEffect(() => {
     if (phase !== 'assessment_complete') return;
+    if (!state.sessionId) return;
     let cancelled = false;
     setPostTestStatus('checking');
     quizApi
-      .getQuestions('POST')
-      .then(({ completedAttempt }) => {
-        if (!cancelled) setPostTestStatus(completedAttempt ? 'done' : 'required');
+      .getQuestions('POST', state.sessionId)
+      .then(({ existingAttempt }) => {
+        if (!cancelled) setPostTestStatus(existingAttempt?.status === 'completed' ? 'done' : 'required');
       })
       .catch(() => {
         if (!cancelled) setPostTestStatus('required');
       });
     return () => { cancelled = true; };
-  }, [phase]);
+  }, [phase, state.sessionId]);
 
   const handleCreate = async (opts: { difficulty: string; totalScenarios: number; module: string }) => {
     await createSession(opts);
@@ -122,13 +132,21 @@ export const ScenarioPage: React.FC = () => {
 
   // Main render switch based on session phase
   const renderContent = () => {
+    // ── Pre-test gate: inserted right as round 1 is about to start, i.e.
+    // once both players have marked ready and the server has already loaded
+    // the first scenario — never during the waiting room itself. Rendered
+    // inline in place of the round-1 view (never a route navigation) so the
+    // live socket connection and reducer state stay mounted underneath;
+    // once complete, the already-loaded round 1 data renders normally.
+    if (isFirstRoundEntry && preTestStatus !== 'done') {
+      if (preTestStatus === 'checking') return <CenteredSpinner />;
+      return <PreTestPage sessionId={state.sessionId} onComplete={() => setPreTestStatus('done')} />;
+    }
+
     switch (phase) {
-      // ── Landing (gated behind Pre-test completion) ─────────────────────────
+      // ── Landing ────────────────────────────────────────────────────────────
       case 'landing':
-        if (preTestStatus === 'checking') return <CenteredSpinner />;
-        if (preTestStatus === 'required') {
-          return <PreTestRequiredGate onStart={() => navigate('/pre-test')} />;
-        }
+        if (resumeStatus === 'checking') return <CenteredSpinner />;
         return (
           <LandingView
             onCreateClick={() => setShowCreate(true)}
@@ -136,29 +154,12 @@ export const ScenarioPage: React.FC = () => {
           />
         );
 
-      // ── Waiting For Participant (attacker created, no defender yet) ───────
+      // ── Waiting For Participant / Waiting Room ────────────────────────────
       case 'waiting_for_participant':
-        return (
-          <WaitingRoom
-            role="attacker"
-            sessionCode={state.sessionCode}
-            difficulty={state.difficulty}
-            totalRounds={state.totalRounds}
-            attackerName={state.attackerName}
-            defenderName={state.defenderName}
-            partnerConnected={state.partnerConnected}
-            myReady={state.myReady}
-            partnerReady={state.partnerReady}
-            onReady={markReady}
-            waitingForParticipant={true}
-          />
-        );
-
-      // ── Waiting Room (both joined, clicking ready) ────────────────────────
       case 'waiting_room':
         return (
           <WaitingRoom
-            role={role!}
+            role={phase === 'waiting_for_participant' ? 'attacker' : role!}
             sessionCode={state.sessionCode}
             difficulty={state.difficulty}
             totalRounds={state.totalRounds}
@@ -168,7 +169,7 @@ export const ScenarioPage: React.FC = () => {
             myReady={state.myReady}
             partnerReady={state.partnerReady}
             onReady={markReady}
-            waitingForParticipant={false}
+            waitingForParticipant={phase === 'waiting_for_participant'}
           />
         );
 
@@ -277,7 +278,20 @@ export const ScenarioPage: React.FC = () => {
         if (!state.report || !role) return null;
         if (postTestStatus === 'checking') return <CenteredSpinner />;
         if (postTestStatus === 'required') {
-          return <PostTestPage onComplete={() => setPostTestStatus('done')} />;
+          return (
+            <PostTestPage
+              sessionId={state.sessionId}
+              onComplete={async () => {
+                // The report currently in state was built the instant the
+                // last round finished, before this Post-test existed — it
+                // must be re-fetched now so it reflects the just-submitted
+                // score, rather than showing "no Post-test" in the report.
+                setPostTestStatus('checking');
+                await refreshReport();
+                setPostTestStatus('done');
+              }}
+            />
+          );
         }
         return (
           <AssessmentReport

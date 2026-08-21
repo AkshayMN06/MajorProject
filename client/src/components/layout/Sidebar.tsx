@@ -1,7 +1,8 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { Shield, LayoutDashboard, Target, FlaskConical, BarChart3, User, Settings } from 'lucide-react';
+import { Shield, LayoutDashboard, Target, FlaskConical, BarChart3, User, Settings, ShieldCheck } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useAuthStore } from '../../store/authStore';
 
 const NAV_ITEMS = [
   { name: 'Dashboard', path: '/', icon: LayoutDashboard },
@@ -12,7 +13,20 @@ const NAV_ITEMS = [
   { name: 'Settings', path: '/settings', icon: Settings },
 ];
 
+// Admin accounts get an entirely separate nav — the learner-facing pages
+// (Dashboard, Scenario Assessment, Practice Labs, Analytics) aren't
+// relevant to an admin. UserRoute (App.tsx) also blocks direct navigation
+// to those routes, so this isn't just a cosmetic hide.
+const ADMIN_NAV_ITEMS = [
+  { name: 'Admin', path: '/admin', icon: ShieldCheck },
+  { name: 'Profile', path: '/profile', icon: User },
+  { name: 'Settings', path: '/settings', icon: Settings },
+];
+
 export const Sidebar: React.FC = () => {
+  const { user } = useAuthStore();
+  const items = user?.role === 'ADMIN' ? ADMIN_NAV_ITEMS : NAV_ITEMS;
+
   return (
     <div className="w-[240px] h-screen fixed left-0 top-0 bg-[#0a0e1a] border-r border-[#1e293b] flex flex-col overflow-y-auto z-50">
       {/* Logo Area */}
@@ -26,7 +40,7 @@ export const Sidebar: React.FC = () => {
 
       {/* Navigation */}
       <nav className="mt-8 px-4 space-y-2">
-        {NAV_ITEMS.map((item) => {
+        {items.map((item) => {
           const Icon = item.icon;
           return (
             <NavLink

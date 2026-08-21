@@ -147,6 +147,7 @@ export interface SessionState {
   sessionId: string | null;
   sessionCode: string | null;
   difficulty: string;
+  module: string | null;
   totalRounds: number;
   currentRound: number;
   attackerName: string | null;
@@ -169,9 +170,11 @@ export interface SessionState {
 type Action =
   | { type: 'SET_LOADING'; loading: boolean }
   | { type: 'SET_ERROR'; error: string | null }
-  | { type: 'SESSION_CREATED'; sessionId: string; sessionCode: string; difficulty: string; totalRounds: number; role: 'attacker' }
-  | { type: 'SESSION_JOINED'; sessionId: string; sessionCode: string; difficulty: string; totalRounds: number; attackerName: string; defenderName: string; role: 'defender' }
+  | { type: 'SESSION_CREATED'; sessionId: string; sessionCode: string; difficulty: string; module: string | null; totalRounds: number; role: 'attacker' }
+  | { type: 'SESSION_JOINED'; sessionId: string; sessionCode: string; difficulty: string; module: string | null; totalRounds: number; attackerName: string; defenderName: string; role: 'defender' }
   | { type: 'SESSION_STATE'; data: Partial<SessionState> }
+  | { type: 'SESSION_REHYDRATED'; phase: 'waiting_for_participant' | 'waiting_room'; sessionId: string; sessionCode: string; difficulty: string; module: string | null; totalRounds: number; attackerName: string | null; defenderName: string | null; role: 'attacker' | 'defender' }
+  | { type: 'POST_TEST_REHYDRATED'; sessionId: string; role: 'attacker' | 'defender'; report: AssessmentReport }
   | { type: 'PARTNER_JOINED'; defenderName: string }
   | { type: 'PARTNER_CONNECTED'; role: string; userName: string }
   | { type: 'READY_UPDATE'; attackerReady: boolean; defenderReady: boolean }
@@ -189,6 +192,7 @@ const initialState: SessionState = {
   sessionId: null,
   sessionCode: null,
   difficulty: 'Medium',
+  module: null,
   totalRounds: 5,
   currentRound: 1,
   attackerName: null,
@@ -220,6 +224,7 @@ function reducer(state: SessionState, action: Action): SessionState {
         sessionId: action.sessionId,
         sessionCode: action.sessionCode,
         difficulty: action.difficulty,
+        module: action.module,
         totalRounds: action.totalRounds,
         isLoading: false,
         error: null,
@@ -232,6 +237,7 @@ function reducer(state: SessionState, action: Action): SessionState {
         sessionId: action.sessionId,
         sessionCode: action.sessionCode,
         difficulty: action.difficulty,
+        module: action.module,
         totalRounds: action.totalRounds,
         attackerName: action.attackerName,
         defenderName: action.defenderName,
@@ -241,6 +247,32 @@ function reducer(state: SessionState, action: Action): SessionState {
       };
     case 'SESSION_STATE':
       return { ...state, ...action.data };
+    case 'SESSION_REHYDRATED':
+      return {
+        ...state,
+        phase: action.phase,
+        role: action.role,
+        sessionId: action.sessionId,
+        sessionCode: action.sessionCode,
+        difficulty: action.difficulty,
+        module: action.module,
+        totalRounds: action.totalRounds,
+        attackerName: action.attackerName,
+        defenderName: action.defenderName,
+        partnerConnected: action.phase === 'waiting_room',
+        isLoading: false,
+        error: null,
+      };
+    case 'POST_TEST_REHYDRATED':
+      return {
+        ...state,
+        phase: 'assessment_complete',
+        sessionId: action.sessionId,
+        role: action.role,
+        report: action.report,
+        isLoading: false,
+        error: null,
+      };
     case 'PARTNER_JOINED':
       return {
         ...state,
@@ -429,13 +461,14 @@ export function useScenarioSession() {
     try {
       const res = await apiClient.post('/sessions/create', opts);
       if (!res.data.success) throw new Error(res.data.error);
-      const { sessionId, sessionCode, difficulty, totalScenarios } = res.data.data;
+      const { sessionId, sessionCode, difficulty, module, totalScenarios } = res.data.data;
 
       dispatch({
         type: 'SESSION_CREATED',
         sessionId,
         sessionCode,
         difficulty,
+        module: module ?? null,
         totalRounds: totalScenarios,
         role: 'attacker',
       });
@@ -454,13 +487,14 @@ export function useScenarioSession() {
     try {
       const res = await apiClient.post('/sessions/join', { sessionCode: sessionCode.toUpperCase() });
       if (!res.data.success) throw new Error(res.data.error);
-      const { sessionId, sessionCode: code, difficulty, totalScenarios, attackerName, defenderName } = res.data.data;
+      const { sessionId, sessionCode: code, difficulty, module, totalScenarios, attackerName, defenderName } = res.data.data;
 
       dispatch({
         type: 'SESSION_JOINED',
         sessionId,
         sessionCode: code,
         difficulty,
+        module: module ?? null,
         totalRounds: totalScenarios,
         attackerName,
         defenderName,
@@ -473,6 +507,55 @@ export function useScenarioSession() {
       }, 300);
     } catch (err: any) {
       dispatch({ type: 'SET_ERROR', error: err.response?.data?.error ?? err.message });
+    }
+  }, [connectSocket]);
+
+  // Rehydrates a hard-refreshed client for the Pre-Test/Post-Test windows
+  // only (see GET /sessions/resumable's own scope note) — full mid-round
+  // resume remains a separate, pre-existing gap this does not address.
+  // Returns 'active' | 'post_test' | null so the caller can react.
+  const rehydrateActiveSession = useCallback(async (): Promise<'active' | 'post_test' | null> => {
+    try {
+      const res = await apiClient.get('/sessions/resumable');
+      if (!res.data.success) return null;
+      const { activeSession, pendingPostTestSession } = res.data.data;
+
+      if (activeSession) {
+        dispatch({
+          type: 'SESSION_REHYDRATED',
+          phase: activeSession.status === 'SESSION_READY' ? 'waiting_room' : 'waiting_for_participant',
+          sessionId: activeSession.sessionId,
+          sessionCode: activeSession.sessionCode,
+          difficulty: activeSession.difficulty,
+          module: activeSession.module ?? null,
+          totalRounds: activeSession.totalScenarios,
+          attackerName: activeSession.attackerName,
+          defenderName: activeSession.defenderName,
+          role: activeSession.role,
+        });
+        connectSocket();
+        setTimeout(() => {
+          socketRef.current?.emit('joinSession', { sessionId: activeSession.sessionId });
+        }, 300);
+        return 'active';
+      }
+
+      if (pendingPostTestSession) {
+        const reportRes = await apiClient.get(`/sessions/${pendingPostTestSession.sessionId}/report`);
+        if (reportRes.data.success) {
+          dispatch({
+            type: 'POST_TEST_REHYDRATED',
+            sessionId: pendingPostTestSession.sessionId,
+            role: pendingPostTestSession.role,
+            report: reportRes.data.data,
+          });
+          return 'post_test';
+        }
+      }
+
+      return null;
+    } catch {
+      return null;
     }
   }, [connectSocket]);
 
@@ -503,6 +586,24 @@ export function useScenarioSession() {
     socketRef.current?.emit('nextRound', { sessionId });
   }, []);
 
+  // The report attached to the 'assessmentCompleted' socket event is built
+  // the instant the last round finishes — necessarily BEFORE the Post-test
+  // has been taken, so its learningOutcomes always show no Post-test score
+  // at that point. Call this after the Post-test is submitted to replace
+  // the stale cached report with a freshly-built one that reflects it.
+  const refreshReport = useCallback(async () => {
+    const { sessionId } = stateRef.current;
+    if (!sessionId) return;
+    try {
+      const res = await apiClient.get(`/sessions/${sessionId}/report`);
+      if (res.data.success) {
+        dispatch({ type: 'SESSION_STATE', data: { report: res.data.data } });
+      }
+    } catch {
+      // Leave the existing (stale) report in place rather than blanking it.
+    }
+  }, []);
+
   const reset = useCallback(() => {
     socketRef.current?.disconnect();
     socketRef.current = null;
@@ -517,10 +618,12 @@ export function useScenarioSession() {
     state,
     createSession,
     joinSession,
+    rehydrateActiveSession,
     markReady,
     submitAttack,
     submitDefense,
     continueToNextRound,
+    refreshReport,
     reset,
     clearError,
   };

@@ -1,14 +1,21 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Loader2, AlertCircle, ClipboardList } from 'lucide-react';
 import { useQuizFlow } from '../hooks/useQuizFlow';
 import { QuizQuestionCard } from '../components/quiz/QuizQuestionCard';
 import { QuizResultSummary } from '../components/quiz/QuizResultSummary';
 
-export const PreTestPage: React.FC = () => {
-  const navigate = useNavigate();
+interface PreTestPageProps {
+  /** The Scenario Assessment session this Pre-test attempt belongs to. */
+  sessionId: string | null;
+  /** Rendered inline in place of the waiting room right after a session is
+   * created/joined, so completing the test reveals the live waiting room
+   * already held in the parent's state rather than navigating away. */
+  onComplete: () => void;
+}
+
+export const PreTestPage: React.FC<PreTestPageProps> = ({ sessionId, onComplete }) => {
   const { phase, questions, answers, selectAnswer, submit, result, error, answeredCount, allAnswered } =
-    useQuizFlow('PRE');
+    useQuizFlow('PRE', sessionId);
 
   if (phase === 'loading') {
     return (
@@ -35,7 +42,7 @@ export const PreTestPage: React.FC = () => {
         title="Pre-test Complete"
         subtitle="This establishes your starting point before the Scenario Assessment. There is no pass/fail threshold — it's a baseline."
         result={result}
-        onContinue={() => navigate('/scenario')}
+        onContinue={onComplete}
         continueLabel="Continue to Scenario Assessment"
       />
     );

@@ -19,6 +19,8 @@ import modulesRoutes from './routes/modules.routes';
 import labsRoutes from './routes/labs.routes';
 import quizRoutes from './routes/quiz.routes';
 import exportRoutes from './routes/export.routes';
+import practiceRoutes from './routes/practice.routes';
+import adminRoutes from './routes/admin.routes';
 
 const app = express();
 const httpServer = createServer(app);
@@ -44,6 +46,8 @@ app.use('/api/modules', modulesRoutes);
 app.use('/api/labs', labsRoutes);
 app.use('/api/quiz', quizRoutes);
 app.use('/api/export', exportRoutes);
+app.use('/api/practice', practiceRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Global Error Handler
 app.use(errorHandler);

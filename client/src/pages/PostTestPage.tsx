@@ -1,24 +1,21 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Loader2, AlertCircle, GraduationCap } from 'lucide-react';
 import { useQuizFlow } from '../hooks/useQuizFlow';
 import { QuizQuestionCard } from '../components/quiz/QuizQuestionCard';
 import { QuizResultSummary } from '../components/quiz/QuizResultSummary';
 
 interface PostTestPageProps {
+  /** The Scenario Assessment session this Post-test attempt belongs to. */
+  sessionId: string | null;
   /** Rendered inline right after a Scenario Assessment completes, so the
    * Learning Summary's "continue" reveals the Assessment Report already
-   * held in the parent's state rather than navigating away. Falls back to
-   * the dashboard when this page is reached directly via /post-test. */
-  onComplete?: () => void;
+   * held in the parent's state rather than navigating away. */
+  onComplete: () => void;
 }
 
-export const PostTestPage: React.FC<PostTestPageProps> = ({ onComplete }) => {
-  const navigate = useNavigate();
+export const PostTestPage: React.FC<PostTestPageProps> = ({ sessionId, onComplete }) => {
   const { phase, questions, answers, selectAnswer, submit, result, error, answeredCount, allAnswered } =
-    useQuizFlow('POST');
-
-  const handleContinue = () => (onComplete ? onComplete() : navigate('/'));
+    useQuizFlow('POST', sessionId);
 
   if (phase === 'loading') {
     return (
@@ -45,7 +42,7 @@ export const PostTestPage: React.FC<PostTestPageProps> = ({ onComplete }) => {
         title="Learning Summary"
         subtitle="Your knowledge after the Scenario Assessment. Compare this against your Pre-test to see what changed."
         result={result}
-        onContinue={handleContinue}
+        onContinue={onComplete}
         continueLabel="View Assessment Report"
       />
     );

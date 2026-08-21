@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { validate } from '../middleware/validate';
+import { getOrStartAttempt, getAttemptQuestions } from '../services/quizEngine';
 import {
   quizQuestionsQuerySchema,
   quizStartSchema,
@@ -14,72 +15,108 @@ const router = Router();
 
 router.use(authenticate);
 
-// Pre-test uses form A, post-test uses form B — different questions
-// covering the same modules, so the post-test isn't just a memorized
-// repeat of the pre-test.
-const TEST_FORM: Record<string, string> = { PRE: 'PRE_A', POST: 'POST_B' };
+function handleError(res: Response, err: any) {
+  const status = typeof err.status === 'number' ? err.status : 500;
+  res.status(status).json({ success: false, error: err.message });
+}
 
-// GET /api/quiz/questions?testType=PRE
+// GET /api/quiz/questions?testType=PRE&sessionId=xxx
 // Never includes correctOption or explanation — those are only revealed
-// after a submitted attempt, via GET /result/:attemptId. Also reports
-// whether this user already has a completed attempt of this testType, so
-// the frontend can gate (pre-test before Scenario Assessment, post-test
-// before the Assessment Report) without a separate status endpoint.
+// after a submitted attempt, via GET /result/:attemptId. Reports the
+// existing attempt for this (session, user, testType) at any status — not
+// just completed — so the frontend can resume an in-progress attempt
+// (refresh-safe) as well as gate on a completed one. When no attempt
+// exists yet, `existingAttempt` is null and `questions` is empty; the
+// frontend then calls POST /start to create one.
 router.get('/questions', validate(quizQuestionsQuerySchema), async (req: AuthRequest, res: Response) => {
   try {
-    const testType = String(req.query.testType);
-    const testForm = TEST_FORM[testType];
+    const testType = String(req.query.testType) as 'PRE' | 'POST';
+    const sessionId = String(req.query.sessionId);
 
-    const questions = await prisma.question.findMany({
-      where: { testForm, isActive: true },
-      select: {
-        id: true,
-        questionId: true,
-        question: true,
-        optionA: true,
-        optionB: true,
-        optionC: true,
-        optionD: true,
-        topic: true,
-        moduleTag: true,
-        topicTag: true,
-        difficulty: true,
+    const session = await prisma.session.findUnique({ where: { id: sessionId } });
+    if (!session) return res.status(404).json({ success: false, error: 'Session not found' });
+    if (session.attackerId !== req.user.id && session.defenderId !== req.user.id) {
+      return res.status(403).json({ success: false, error: 'You are not a participant in this session' });
+    }
+
+    const attempt = await prisma.quizAttempt.findUnique({
+      where: { sessionId_userId_testType: { sessionId, userId: req.user.id, testType } },
+    });
+
+    const questions = attempt ? await getAttemptQuestions(attempt) : [];
+
+    res.json({
+      success: true,
+      data: {
+        testType,
+        moduleTag: session.module,
+        difficulty: session.difficulty,
+        existingAttempt: attempt
+          ? {
+              id: attempt.id,
+              status: attempt.status,
+              score: attempt.score,
+              totalQuestions: attempt.totalQuestions,
+              completedAt: attempt.completedAt,
+            }
+          : null,
+        questions: questions.map((q) => ({
+          id: q.id,
+          questionId: q.questionId,
+          question: q.question,
+          optionA: q.optionA,
+          optionB: q.optionB,
+          optionC: q.optionC,
+          optionD: q.optionD,
+          topic: q.topic,
+          moduleTag: q.moduleTag,
+          topicTag: q.topicTag,
+          difficulty: q.difficulty,
+        })),
       },
     });
-
-    const completedAttempt = await prisma.quizAttempt.findFirst({
-      where: { userId: req.user.id, testType, status: 'completed' },
-      orderBy: { completedAt: 'desc' },
-      select: { id: true, score: true, totalQuestions: true, completedAt: true },
-    });
-
-    res.json({ success: true, data: { testType, testForm, questions, completedAttempt } });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    handleError(res, err);
   }
 });
 
 // POST /api/quiz/start
+// Idempotent — delegates to getOrStartAttempt, which returns the existing
+// attempt untouched if one already exists for this (session, user,
+// testType) rather than re-selecting or duplicating.
 router.post('/start', validate(quizStartSchema), async (req: AuthRequest, res: Response) => {
   try {
-    const { testType } = req.body;
-    const testForm = TEST_FORM[testType];
+    const { testType, sessionId } = req.body as { testType: 'PRE' | 'POST'; sessionId: string };
 
-    const totalQuestions = await prisma.question.count({ where: { testForm, isActive: true } });
-    if (totalQuestions === 0) {
-      return res.status(400).json({ success: false, error: `No active questions for ${testType}` });
-    }
-
-    const attempt = await prisma.quizAttempt.create({
-      data: { userId: req.user.id, testType, testForm, status: 'in_progress', totalQuestions },
-    });
+    const attempt = await getOrStartAttempt(req.user.id, sessionId, testType);
+    const questions = await getAttemptQuestions(attempt);
 
     res.status(201).json({
       success: true,
-      data: { attemptId: attempt.id, testType, testForm, totalQuestions },
+      data: {
+        attemptId: attempt.id,
+        testType,
+        moduleTag: attempt.moduleTag,
+        difficulty: attempt.difficulty,
+        totalQuestions: attempt.totalQuestions,
+        status: attempt.status,
+        questions: questions.map((q) => ({
+          id: q.id,
+          questionId: q.questionId,
+          question: q.question,
+          optionA: q.optionA,
+          optionB: q.optionB,
+          optionC: q.optionC,
+          optionD: q.optionD,
+          topic: q.topic,
+          moduleTag: q.moduleTag,
+          topicTag: q.topicTag,
+          difficulty: q.difficulty,
+        })),
+      },
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    handleError(res, err);
   }
 });
 
@@ -125,7 +162,7 @@ router.post('/submit', validate(quizSubmitSchema), async (req: AuthRequest, res:
 
     res.json({ success: true, data: { attemptId, score, totalQuestions: attempt.totalQuestions } });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    handleError(res, err);
   }
 });
 
@@ -149,7 +186,8 @@ router.get('/result/:attemptId', validate(quizResultParamsSchema), async (req: A
       data: {
         attemptId: attempt.id,
         testType: attempt.testType,
-        testForm: attempt.testForm,
+        moduleTag: attempt.moduleTag,
+        difficulty: attempt.difficulty,
         score: attempt.score,
         totalQuestions: attempt.totalQuestions,
         completedAt: attempt.completedAt,
@@ -170,7 +208,7 @@ router.get('/result/:attemptId', validate(quizResultParamsSchema), async (req: A
       },
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    handleError(res, err);
   }
 });
 

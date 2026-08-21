@@ -32,10 +32,11 @@ type ResponseWithQuestion = {
   question: { moduleTag: string; topicTag: string };
 };
 
-async function getLatestCompletedAttempt(prisma: PrismaClient, userId: string, testType: 'PRE' | 'POST') {
+// At most one row can match — enforced by the QuizAttempt
+// @@unique([sessionId, userId, testType]) constraint.
+async function getAttempt(prisma: PrismaClient, sessionId: string, userId: string, testType: 'PRE' | 'POST') {
   return prisma.quizAttempt.findFirst({
-    where: { userId, testType, status: 'completed' },
-    orderBy: { completedAt: 'desc' },
+    where: { sessionId, userId, testType, status: 'completed' },
     include: { responses: { include: { question: true } } },
   });
 }
@@ -65,17 +66,18 @@ function accuracyByTopic(responses: ResponseWithQuestion[]): Map<string, { corre
 }
 
 /**
- * Computes this user's Pre-test -> Post-test learning outcomes, entirely
- * server-side from their stored QuizAttempt/QuizResponse rows. A user's
- * pre-test and post-test are one-time, account-level checkpoints (not tied
- * to a specific Scenario Assessment session — see the quiz gating in
- * ScenarioPage.tsx), so this always reports their latest completed attempt
- * of each type, regardless of which session's report is being viewed.
+ * Computes this user's Pre-test -> Post-test learning outcomes for one
+ * specific Scenario Assessment session, entirely server-side from their
+ * stored QuizAttempt/QuizResponse rows. Every session gets its own
+ * independent Pre-test and Post-test attempt (see quizEngine.ts), so this
+ * must be scoped to `sessionId` rather than reporting the user's latest
+ * attempt ever — otherwise a newer session's report would overwrite an
+ * older session's scores.
  */
-export async function buildLearningOutcomes(prisma: PrismaClient, userId: string): Promise<LearningOutcomes> {
+export async function buildLearningOutcomes(prisma: PrismaClient, userId: string, sessionId: string): Promise<LearningOutcomes> {
   const [preAttempt, postAttempt] = await Promise.all([
-    getLatestCompletedAttempt(prisma, userId, 'PRE'),
-    getLatestCompletedAttempt(prisma, userId, 'POST'),
+    getAttempt(prisma, sessionId, userId, 'PRE'),
+    getAttempt(prisma, sessionId, userId, 'POST'),
   ]);
 
   const hasPreTest = !!preAttempt;

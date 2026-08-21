@@ -112,8 +112,8 @@ export async function buildAssessmentReport(sessionId: string) {
 
   // Learning Outcomes — Pre-test/Post-test, computed server-side per user
   // from their own QuizAttempt/QuizResponse rows (never trusts a client-
-  // supplied score). These are one-time, account-level checkpoints, not
-  // scoped to this session — see learningOutcomes.ts.
+  // supplied score). Each Scenario Assessment session owns its own
+  // independent Pre-test/Post-test attempt pair — see learningOutcomes.ts.
   const emptyLearningOutcomes = {
     hasPreTest: false,
     hasPostTest: false,
@@ -126,8 +126,8 @@ export async function buildAssessmentReport(sessionId: string) {
     recommendations: [],
   };
   const [attackerLearningOutcomes, defenderLearningOutcomes] = await Promise.all([
-    buildLearningOutcomes(prisma, session.attackerId),
-    session.defenderId ? buildLearningOutcomes(prisma, session.defenderId) : Promise.resolve(emptyLearningOutcomes),
+    buildLearningOutcomes(prisma, session.attackerId, session.id),
+    session.defenderId ? buildLearningOutcomes(prisma, session.defenderId, session.id) : Promise.resolve(emptyLearningOutcomes),
   ]);
 
   const rounds = Array.from(

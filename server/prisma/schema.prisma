@@ -22,6 +22,7 @@ model User {
   location      String?
   preferredRole String?
   timezone      String?
+  role          String           @default("USER") // 'USER' | 'ADMIN' — never placed in the JWT; authenticate() reloads this from the DB on every request, so promotion/demotion takes effect immediately without re-login
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
 
@@ -33,6 +34,7 @@ model User {
   analytics        Analytics[]
   quizAttempts     QuizAttempt[]
   assessmentSnapshots AssessmentSnapshot[]
+  practiceSessions PracticeSession[]
 
   @@map("users")
 }
@@ -58,10 +60,11 @@ model Session {
   attacker User  @relation("AttackerSessions", fields: [attackerId], references: [id])
   defender User? @relation("DefenderSessions", fields: [defenderId], references: [id])
 
-  attempts Attempt[]
-  events   Event[]
-  scores   Score[]
+  attempts     Attempt[]
+  events       Event[]
+  scores       Score[]
   assessmentSnapshots AssessmentSnapshot[]
+  quizAttempts QuizAttempt[]
 
   @@map("sessions")
 }
@@ -216,10 +219,13 @@ model Analytics {
   @@map("analytics")
 }
 
-// Pre-test / Post-test assessment content. Two parallel forms (PRE_A,
-// POST_B) so the post-test isn't just the learner re-answering questions
-// they already saw. `correctOption` and `explanation` are never sent to the
-// client until after an attempt is submitted (see quiz.routes.ts).
+// Pre-test / Post-test assessment content. Pre and Post draw from the same
+// per-(moduleTag, difficulty) pool of 50 questions (see quizEngine.ts) —
+// each Scenario Assessment attempt gets its own 8-question sample, with
+// repetition-avoidance against the attempt's own Pre-test (when selecting
+// Post) and the user's most recent attempt of the same module+difficulty+
+// testType. `correctOption` and `explanation` are never sent to the client
+// until after an attempt is submitted (see quiz.routes.ts).
 model Question {
   id            String  @id @default(cuid())
   questionId    String  @unique // stable external id from the source data (e.g. "q1", "app3")
@@ -232,8 +238,7 @@ model Question {
   topic         String
   moduleTag     String // one of the 5 platform modules — Web Security, Network Security, System Security, Social Engineering, Cryptography
   topicTag      String // normalized topic, e.g. "SQL Injection"
-  difficulty    String // 'Easy' | 'Medium' | 'Hard'
-  testForm      String // 'PRE_A' | 'POST_B'
+  difficulty    String // 'Easy' | 'Medium' | 'Hard' — exactly 50 questions per (moduleTag, difficulty)
   explanation   String // shown in the Learning Summary review, win or lose
   isActive      Boolean @default(true)
 
@@ -242,11 +247,19 @@ model Question {
   @@map("questions")
 }
 
+// One row per (Session, user, testType) — enforced by the unique index
+// below, which is both the idempotency guarantee (refresh/retry can never
+// create a duplicate) and the mechanism that makes every new Scenario
+// Assessment attempt (= new Session) get its own independent Pre-test and
+// Post-test rather than a single account-level checkpoint.
 model QuizAttempt {
   id             String    @id @default(cuid())
   userId         String
+  sessionId      String? // the Scenario Assessment attempt this belongs to; null only for legacy pre-migration rows
+  moduleTag      String? // snapshot of session.module at attempt-creation time ('All Modules' allowed)
+  difficulty     String? // snapshot of session.difficulty at attempt-creation time ('All' allowed)
+  questionIds    Json? // the 8 selected question ids, fixed for the life of the attempt (resume support)
   testType       String // 'PRE' | 'POST'
-  testForm       String // 'PRE_A' | 'POST_B'
   status         String    @default("in_progress") // 'in_progress' | 'completed'
   score          Int? // correct-answer count, computed server-side on submit
   totalQuestions Int
@@ -254,8 +267,10 @@ model QuizAttempt {
   completedAt    DateTime?
 
   user      User           @relation(fields: [userId], references: [id])
+  session   Session?       @relation(fields: [sessionId], references: [id])
   responses QuizResponse[]
 
+  @@unique([sessionId, userId, testType])
   @@map("quiz_attempts")
 }
 
@@ -272,6 +287,110 @@ model QuizResponse {
 
   @@unique([attemptId, questionId])
   @@map("quiz_responses")
+}
+
+// Practice Labs — a role-neutral, case-study-based MCQ learning module,
+// deliberately kept in its own tables rather than reusing
+// Question/QuizAttempt/QuizResponse (the Pre/Post-test bank): sharing those
+// would risk contaminating the Pre/Post-test's moduleTag+difficulty pool
+// selection, and separate tables make analytics isolation structural (nothing in
+// analyticsEngine.ts/scoreEngine.ts/reportBuilder.ts/recommendationEngine.ts
+// ever touches these) rather than something that has to be remembered.
+// `module` matches Scenario.category (validated against it at request
+// time) — the module list itself is never duplicated.
+//
+// Hierarchy: Module -> CaseStudy -> PracticeQuestionPool -> PracticeQuestion.
+// Every session picks exactly one CaseStudy and, within it, exactly one
+// PracticeQuestionPool, then draws 8 questions from that single pool — see
+// practiceEngine.ts.
+model CaseStudy {
+  id          String  @id @default(cuid())
+  module      String // matches Scenario.category
+  title       String
+  description String // the scenario text shown to the learner before questions
+  isActive    Boolean @default(true)
+
+  pools    PracticeQuestionPool[]
+  sessions PracticeSession[]
+
+  @@map("case_studies")
+}
+
+// A themed slice of questions within one case study (e.g. "Identification",
+// "Investigation", "Defense & Mitigation", "Response & Prevention") — pools
+// within the same case study test different angles of the same scenario,
+// not reshuffled copies of each other.
+model PracticeQuestionPool {
+  id          String  @id @default(cuid())
+  caseStudyId String
+  name        String // the angle this pool tests
+  isActive    Boolean @default(true)
+
+  caseStudy CaseStudy          @relation(fields: [caseStudyId], references: [id])
+  questions PracticeQuestion[]
+  sessions  PracticeSession[]
+
+  @@map("practice_question_pools")
+}
+
+model PracticeQuestion {
+  id            String  @id @default(cuid())
+  poolId        String
+  module        String // matches Scenario.category — denormalized for simpler module-scoped queries/dedupe checks
+  question      String
+  optionA       String
+  optionB       String
+  optionC       String
+  optionD       String
+  correctOption String // 'A' | 'B' | 'C' | 'D'
+  explanation   String
+  topicTag      String // specific concept, e.g. "Port Scanning" — for content-diversity checks
+  concept       String // 'attacker' | 'defender' | 'both' — metadata only, never a user-facing mode
+  difficulty    String  @default("Easy")
+  isActive      Boolean @default(true)
+
+  pool      PracticeQuestionPool @relation(fields: [poolId], references: [id])
+  responses PracticeResponse[]
+
+  @@map("practice_questions")
+}
+
+// One row per practice attempt. Deliberately unrelated to Session/Scenario —
+// a practice session is not a Scenario Assessment round.
+model PracticeSession {
+  id             String    @id @default(cuid())
+  userId         String
+  module         String
+  caseStudyId    String
+  poolId         String
+  questionIds    Json // the 8 question ids selected at start, fixed for the session
+  status         String    @default("in_progress") // 'in_progress' | 'completed'
+  score          Int?
+  totalQuestions Int
+  startedAt      DateTime  @default(now())
+  completedAt    DateTime?
+
+  user      User                 @relation(fields: [userId], references: [id])
+  caseStudy CaseStudy            @relation(fields: [caseStudyId], references: [id])
+  pool      PracticeQuestionPool @relation(fields: [poolId], references: [id])
+  responses PracticeResponse[]
+
+  @@map("practice_sessions")
+}
+
+model PracticeResponse {
+  id             String   @id @default(cuid())
+  sessionId      String
+  questionId     String
+  selectedOption String // 'A' | 'B' | 'C' | 'D'
+  isCorrect      Boolean
+  createdAt      DateTime @default(now())
+
+  session  PracticeSession  @relation(fields: [sessionId], references: [id])
+  question PracticeQuestion @relation(fields: [questionId], references: [id])
+
+  @@unique([sessionId, questionId])
+  @@map("practice_responses")
 }
 
 model Module {

@@ -5,11 +5,17 @@ import type { QuizQuestion, QuizResult, QuizTestType } from '../services/api';
 export type QuizFlowPhase = 'loading' | 'taking' | 'submitting' | 'result' | 'error';
 
 /**
- * Shared fetch/answer/submit logic for the Pre-test and Post-test pages.
- * If the learner already has a completed attempt for this testType, skips
- * straight to its result instead of making them retake it.
+ * Shared fetch/answer/submit logic for the Pre-test and Post-test pages,
+ * scoped to one Scenario Assessment session's attempt. Three cases on load:
+ *  - a completed attempt already exists for this (session, testType) -> skip
+ *    straight to its result instead of making the learner retake it.
+ *  - an in-progress attempt already exists (e.g. the page was refreshed
+ *    mid-test) -> resume directly into 'taking' with its already-selected
+ *    questions, WITHOUT calling start() again (that would be the duplicate
+ *    bug this hook exists to avoid).
+ *  - no attempt exists yet -> call start() to select questions and create one.
  */
-export function useQuizFlow(testType: QuizTestType) {
+export function useQuizFlow(testType: QuizTestType, sessionId: string | null) {
   const [phase, setPhase] = useState<QuizFlowPhase>('loading');
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [attemptId, setAttemptId] = useState<string | null>(null);
@@ -18,23 +24,35 @@ export function useQuizFlow(testType: QuizTestType) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!sessionId) {
+      setError('No active session to attach this test to.');
+      setPhase('error');
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
-        const { questions: qs, completedAttempt } = await quizApi.getQuestions(testType);
+        const { existingAttempt, questions: qs } = await quizApi.getQuestions(testType, sessionId);
         if (cancelled) return;
 
-        if (completedAttempt) {
-          const fullResult = await quizApi.getResult(completedAttempt.id);
+        if (existingAttempt?.status === 'completed') {
+          const fullResult = await quizApi.getResult(existingAttempt.id);
           if (cancelled) return;
           setResult(fullResult);
           setPhase('result');
           return;
         }
 
-        const { attemptId: newAttemptId } = await quizApi.start(testType);
+        if (existingAttempt?.status === 'in_progress') {
+          setQuestions(qs);
+          setAttemptId(existingAttempt.id);
+          setPhase('taking');
+          return;
+        }
+
+        const { attemptId: newAttemptId, questions: newQs } = await quizApi.start(testType, sessionId);
         if (cancelled) return;
-        setQuestions(qs);
+        setQuestions(newQs);
         setAttemptId(newAttemptId);
         setPhase('taking');
       } catch (err: any) {
@@ -45,7 +63,7 @@ export function useQuizFlow(testType: QuizTestType) {
       }
     })();
     return () => { cancelled = true; };
-  }, [testType]);
+  }, [testType, sessionId]);
 
   const selectAnswer = useCallback((questionId: string, option: 'A' | 'B' | 'C' | 'D') => {
     setAnswers((prev) => ({ ...prev, [questionId]: option }));

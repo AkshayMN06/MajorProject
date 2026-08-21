@@ -127,6 +127,7 @@ router.post('/join', validate(joinSessionSchema), async (req: AuthRequest, res: 
         sessionCode: updated.sessionCode,
         status: updated.status,
         difficulty: updated.difficulty,
+        module: updated.module,
         totalScenarios: updated.totalScenarios,
         attackerName: updated.attacker.name,
         defenderName: updated.defender?.name,
@@ -152,6 +153,75 @@ router.post('/ready', validate(readySchema), async (req: AuthRequest, res: Respo
     res.json({ success: true, data: { attackerReady, defenderReady, startedRound } });
   } catch (err: any) {
     res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/sessions/resumable
+// Rehydrates a hard-refreshed client for the two windows a Pre-Test or
+// Post-Test can occupy: `activeSession` covers the pre-round-play window
+// (WAITING_FOR_PARTICIPANT/SESSION_READY — where the Pre-Test gate lives),
+// and `pendingPostTestSession` covers a completed assessment whose Post-Test
+// this user hasn't finished yet. Scoped deliberately to just these two
+// windows — full mid-round (attack/defense-selection) resume is a
+// pre-existing, separate gap this endpoint does not address.
+router.get('/resumable', async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user.id;
+
+    const activeSession = await prisma.session.findFirst({
+      where: {
+        OR: [{ attackerId: userId }, { defenderId: userId }],
+        status: { in: [SessionState.WAITING_FOR_PARTICIPANT, SessionState.SESSION_READY] },
+      },
+      orderBy: { createdAt: 'desc' },
+      include: { attacker: true, defender: true },
+    });
+
+    let pendingPostTestSession = null;
+    const completedSessions = await prisma.session.findMany({
+      where: {
+        OR: [{ attackerId: userId }, { defenderId: userId }],
+        status: SessionState.ASSESSMENT_COMPLETE,
+      },
+      orderBy: { completedAt: 'desc' },
+      take: 5,
+    });
+    for (const session of completedSessions) {
+      const postAttempt = await prisma.quizAttempt.findUnique({
+        where: { sessionId_userId_testType: { sessionId: session.id, userId, testType: 'POST' } },
+      });
+      if (!postAttempt || postAttempt.status !== 'completed') {
+        pendingPostTestSession = session;
+        break;
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        activeSession: activeSession
+          ? {
+              sessionId: activeSession.id,
+              sessionCode: activeSession.sessionCode,
+              status: activeSession.status,
+              difficulty: activeSession.difficulty,
+              module: activeSession.module,
+              totalScenarios: activeSession.totalScenarios,
+              attackerName: activeSession.attacker.name,
+              defenderName: activeSession.defender?.name ?? null,
+              role: activeSession.attackerId === userId ? 'attacker' : 'defender',
+            }
+          : null,
+        pendingPostTestSession: pendingPostTestSession
+          ? {
+              sessionId: pendingPostTestSession.id,
+              role: pendingPostTestSession.attackerId === userId ? 'attacker' : 'defender',
+            }
+          : null,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

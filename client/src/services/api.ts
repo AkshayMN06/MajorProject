@@ -134,11 +134,12 @@ export interface QuizQuestion {
   difficulty: string;
 }
 
-export interface CompletedAttemptSummary {
+export interface ExistingAttemptSummary {
   id: string;
-  score: number;
+  status: 'in_progress' | 'completed';
+  score: number | null;
   totalQuestions: number;
-  completedAt: string;
+  completedAt: string | null;
 }
 
 export interface QuizResultResponseItem {
@@ -159,7 +160,8 @@ export interface QuizResultResponseItem {
 export interface QuizResult {
   attemptId: string;
   testType: QuizTestType;
-  testForm: string;
+  moduleTag: string | null;
+  difficulty: string | null;
   score: number;
   totalQuestions: number;
   completedAt: string;
@@ -167,19 +169,90 @@ export interface QuizResult {
 }
 
 export const quizApi = {
-  getQuestions: (testType: QuizTestType) =>
-    unwrap<{ testType: QuizTestType; testForm: string; questions: QuizQuestion[]; completedAttempt: CompletedAttemptSummary | null }>(
-      apiClient.get('/quiz/questions', { params: { testType } })
-    ),
-  start: (testType: QuizTestType) =>
-    unwrap<{ attemptId: string; testType: QuizTestType; testForm: string; totalQuestions: number }>(
-      apiClient.post('/quiz/start', { testType })
-    ),
+  getQuestions: (testType: QuizTestType, sessionId: string) =>
+    unwrap<{
+      testType: QuizTestType;
+      moduleTag: string | null;
+      difficulty: string | null;
+      existingAttempt: ExistingAttemptSummary | null;
+      questions: QuizQuestion[];
+    }>(apiClient.get('/quiz/questions', { params: { testType, sessionId } })),
+  start: (testType: QuizTestType, sessionId: string) =>
+    unwrap<{
+      attemptId: string;
+      testType: QuizTestType;
+      moduleTag: string | null;
+      difficulty: string | null;
+      totalQuestions: number;
+      status: 'in_progress' | 'completed';
+      questions: QuizQuestion[];
+    }>(apiClient.post('/quiz/start', { testType, sessionId })),
   submit: (attemptId: string, responses: { questionId: string; selectedOption: string }[]) =>
     unwrap<{ attemptId: string; score: number; totalQuestions: number }>(
       apiClient.post('/quiz/submit', { attemptId, responses })
     ),
   getResult: (attemptId: string) => unwrap<QuizResult>(apiClient.get(`/quiz/result/${attemptId}`)),
+};
+
+// --- Practice Labs API ---
+// Role-neutral MCQ practice, reusing Scenario Assessment's own modules
+// (Scenario.category) — never a separately maintained module list. Practice
+// sessions/results are entirely isolated from assessment analytics.
+export interface PracticeModule {
+  module: string;
+  questionCount: number;
+  questionsPerSession: number;
+  difficulty: string;
+}
+
+export interface PracticeQuestion {
+  id: string;
+  question: string;
+  optionA: string;
+  optionB: string;
+  optionC: string;
+  optionD: string;
+  topicTag: string;
+  difficulty: string;
+}
+
+export interface PracticeResultResponseItem {
+  questionId: string;
+  question: string;
+  optionA: string;
+  optionB: string;
+  optionC: string;
+  optionD: string;
+  selectedOption: string | null;
+  correctOption: string;
+  isCorrect: boolean;
+  explanation: string;
+  topic: string;
+  moduleTag: string;
+}
+
+export interface PracticeResult {
+  sessionId: string;
+  module: string;
+  score: number;
+  totalQuestions: number;
+  responses: PracticeResultResponseItem[];
+}
+
+export interface PracticeCaseStudy {
+  id: string;
+  title: string;
+  description: string;
+}
+
+export const practiceApi = {
+  getModules: () => unwrap<PracticeModule[]>(apiClient.get('/practice/modules')),
+  startSession: (module: string) =>
+    unwrap<{ sessionId: string; module: string; caseStudy: PracticeCaseStudy; totalQuestions: number; questions: PracticeQuestion[] }>(
+      apiClient.post(`/practice/${encodeURIComponent(module)}/session`)
+    ),
+  submitSession: (sessionId: string, responses: { questionId: string; selectedOption: string }[]) =>
+    unwrap<PracticeResult>(apiClient.post(`/practice/session/${sessionId}/submit`, { responses })),
 };
 
 // --- CSV Export API ---
@@ -192,6 +265,82 @@ export const exportApi = {
     apiClient.get(`/export/session/${sessionId}/attempts.csv`, { responseType: 'blob' }),
   downloadResultsCsv: (sessionId: string) =>
     apiClient.get(`/export/session/${sessionId}/results.csv`, { responseType: 'blob' }),
+};
+
+// --- Admin Dashboard API ---
+// Every endpoint here requires an ADMIN-role account server-side
+// (requireAdmin middleware) — a normal user's token gets a real 403 from
+// the API regardless of whether the frontend route guard is reached.
+export interface AdminOverallStats {
+  pairCount: number;
+  avgPrePct: number;
+  avgPostPct: number;
+  avgImprovementPP: number;
+  improved: number;
+  unchanged: number;
+  decreased: number;
+}
+
+export interface AdminStats extends AdminOverallStats {
+  totalUsers: number;
+}
+
+export interface AdminImprovementRow {
+  sessionId: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  moduleTag: string | null;
+  difficulty: string | null;
+  preScore: number;
+  preTotal: number;
+  postScore: number;
+  postTotal: number;
+  prePct: number;
+  postPct: number;
+  rawImprovement: number;
+  ppImprovement: number;
+  category: 'improved' | 'unchanged' | 'decreased';
+  completedAt: string;
+}
+
+export interface AdminCategoryAggregate {
+  category: string;
+  attempts: number;
+  avgPrePct: number;
+  avgPostPct: number;
+  avgImprovementPP: number;
+}
+
+export interface AdminAnalyticsFilters {
+  module?: string;
+  difficulty?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface AdminUser {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  createdAt: string;
+  quizAttemptCount: number;
+}
+
+export const adminApi = {
+  getStats: () => unwrap<AdminStats>(apiClient.get('/admin/stats')),
+  getAnalytics: (filters: AdminAnalyticsFilters = {}) =>
+    unwrap<{ overall: AdminOverallStats; rows: AdminImprovementRow[]; moduleSummary: AdminCategoryAggregate[]; difficultySummary: AdminCategoryAggregate[] }>(
+      apiClient.get('/admin/analytics', { params: filters })
+    ),
+  getUsers: (params: { search?: string; page?: number; pageSize?: number } = {}) =>
+    unwrap<{ users: AdminUser[]; total: number; page: number; pageSize: number }>(apiClient.get('/admin/users', { params })),
+  // Bypasses unwrap for a raw blob download, matching exportApi's pattern.
+  // Overrides the default 10s apiClient timeout — the full export can take
+  // longer than that.
+  exportExcel: (filters: AdminAnalyticsFilters = {}) =>
+    apiClient.get('/admin/export', { params: filters, responseType: 'blob', timeout: 60000 }),
 };
 
 export { apiClient };
