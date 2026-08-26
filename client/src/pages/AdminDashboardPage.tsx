@@ -1,12 +1,16 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Users, ClipboardCheck, TrendingUp, TrendingDown, Minus, Download,
-  Search, Loader2, AlertTriangle, ShieldCheck, Filter, X,
+  Search, Loader2, AlertTriangle, ShieldCheck, Filter, X, ArrowUp, ArrowDown, ArrowUpDown, Trash2,
 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { adminApi } from '../services/api';
 import type { AdminStats, AdminOverallStats, AdminImprovementRow, AdminCategoryAggregate, AdminUser, AdminAnalyticsFilters } from '../services/api';
+
+type SortOrder = 'asc' | 'desc';
+type UserSortField = 'name' | 'email' | 'role' | 'createdAt' | 'quizAttemptCount';
+type ImprovementSortField = 'userName' | 'moduleTag' | 'difficulty' | 'prePct' | 'postPct' | 'ppImprovement' | 'completedAt';
 
 const MODULES = ['Web Security', 'Network Security', 'System Security', 'Social Engineering', 'Cryptography'];
 const DIFFICULTIES = ['Easy', 'Medium', 'Hard'];
@@ -37,10 +41,19 @@ export const AdminDashboardPage: React.FC = () => {
 
   const [userSearch, setUserSearch] = useState('');
   const [userPage, setUserPage] = useState(1);
+  const [userSortBy, setUserSortBy] = useState<UserSortField>('createdAt');
+  const [userSortOrder, setUserSortOrder] = useState<SortOrder>('desc');
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [usersTotal, setUsersTotal] = useState(0);
   const [usersLoading, setUsersLoading] = useState(true);
   const USERS_PAGE_SIZE = 10;
+
+  const [improvementSortBy, setImprovementSortBy] = useState<ImprovementSortField>('completedAt');
+  const [improvementSortOrder, setImprovementSortOrder] = useState<SortOrder>('desc');
+
+  const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -84,13 +97,13 @@ export const AdminDashboardPage: React.FC = () => {
     })();
   }, [filters]);
 
-  // Debounced user search + pagination.
+  // Debounced user search + pagination + sort.
   useEffect(() => {
     let cancelled = false;
     setUsersLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const data = await adminApi.getUsers({ search: userSearch || undefined, page: userPage, pageSize: USERS_PAGE_SIZE });
+        const data = await adminApi.getUsers({ search: userSearch || undefined, page: userPage, pageSize: USERS_PAGE_SIZE, sortBy: userSortBy, sortOrder: userSortOrder });
         if (cancelled) return;
         setUsers(data.users);
         setUsersTotal(data.total);
@@ -101,7 +114,75 @@ export const AdminDashboardPage: React.FC = () => {
       }
     }, userSearch ? 300 : 0);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [userSearch, userPage]);
+  }, [userSearch, userPage, userSortBy, userSortOrder]);
+
+  const toggleUserSort = (field: UserSortField) => {
+    if (userSortBy === field) {
+      setUserSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setUserSortBy(field);
+      setUserSortOrder('asc');
+    }
+  };
+
+  const toggleImprovementSort = (field: ImprovementSortField) => {
+    if (improvementSortBy === field) {
+      setImprovementSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setImprovementSortBy(field);
+      setImprovementSortOrder('asc');
+    }
+  };
+
+  // All rows are already fully loaded (not paginated), so this sorts
+  // client-side rather than re-fetching.
+  const sortedRows = useMemo(() => {
+    const copy = [...rows];
+    const dir = improvementSortOrder === 'asc' ? 1 : -1;
+    copy.sort((a, b) => {
+      const av = a[improvementSortBy];
+      const bv = b[improvementSortBy];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1; // nulls (e.g. missing module) sort last regardless of direction
+      if (bv == null) return -1;
+      if (typeof av === 'string' && typeof bv === 'string') return av.localeCompare(bv) * dir;
+      return ((av as number) - (bv as number)) * dir;
+    });
+    return copy;
+  }, [rows, improvementSortBy, improvementSortOrder]);
+
+  const handleDeleteUser = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await adminApi.deleteUser(deleteTarget.id);
+      setDeleteTarget(null);
+      // The deleted user's data disappears from every section — refresh
+      // everything that could reference it, not just the users table.
+      const [statsData, analyticsData, usersData] = await Promise.all([
+        adminApi.getStats(),
+        adminApi.getAnalytics(filters),
+        adminApi.getUsers({ search: userSearch || undefined, page: userPage, pageSize: USERS_PAGE_SIZE, sortBy: userSortBy, sortOrder: userSortOrder }),
+      ]);
+      setStats(statsData);
+      setOverall(analyticsData.overall);
+      setRows(analyticsData.rows);
+      setModuleSummary(analyticsData.moduleSummary);
+      setDifficultySummary(analyticsData.difficultySummary);
+      // Deleting the last user on a page can leave it empty — step back one page.
+      if (usersData.users.length === 0 && userPage > 1) {
+        setUserPage((p) => p - 1);
+      } else {
+        setUsers(usersData.users);
+        setUsersTotal(usersData.total);
+      }
+    } catch (err: any) {
+      setDeleteError(err.response?.data?.error ?? err.message ?? 'Failed to delete this account.');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const handleExport = async () => {
     setExporting(true);
@@ -254,16 +335,17 @@ export const AdminDashboardPage: React.FC = () => {
             <table className="w-full text-sm text-left">
               <thead className="text-xs text-gray-400 uppercase bg-black/20">
                 <tr>
-                  <th className="px-3 py-2 rounded-l-lg">User</th>
-                  <th className="px-3 py-2">Module</th>
-                  <th className="px-3 py-2">Difficulty</th>
-                  <th className="px-3 py-2">Pre-Test</th>
-                  <th className="px-3 py-2">Post-Test</th>
-                  <th className="px-3 py-2 rounded-r-lg">Improvement</th>
+                  <SortHeader label="User" field="userName" active={improvementSortBy} order={improvementSortOrder} onClick={toggleImprovementSort} className="rounded-l-lg" />
+                  <SortHeader label="Module" field="moduleTag" active={improvementSortBy} order={improvementSortOrder} onClick={toggleImprovementSort} />
+                  <SortHeader label="Difficulty" field="difficulty" active={improvementSortBy} order={improvementSortOrder} onClick={toggleImprovementSort} />
+                  <SortHeader label="Pre-Test" field="prePct" active={improvementSortBy} order={improvementSortOrder} onClick={toggleImprovementSort} />
+                  <SortHeader label="Post-Test" field="postPct" active={improvementSortBy} order={improvementSortOrder} onClick={toggleImprovementSort} />
+                  <SortHeader label="Improvement" field="ppImprovement" active={improvementSortBy} order={improvementSortOrder} onClick={toggleImprovementSort} />
+                  <SortHeader label="Date" field="completedAt" active={improvementSortBy} order={improvementSortOrder} onClick={toggleImprovementSort} className="rounded-r-lg" />
                 </tr>
               </thead>
               <tbody>
-                {rows.slice(0, 50).map((r) => (
+                {sortedRows.slice(0, 50).map((r) => (
                   <tr key={`${r.sessionId}:${r.userId}`} className="border-b border-white/5 last:border-0 hover:bg-white/5 transition-colors">
                     <td className="px-3 py-3">
                       <div className="font-medium text-gray-200">{r.userName}</div>
@@ -276,6 +358,7 @@ export const AdminDashboardPage: React.FC = () => {
                     <td className={`px-3 py-3 font-bold ${r.category === 'improved' ? 'text-green-400' : r.category === 'decreased' ? 'text-red-400' : 'text-gray-400'}`}>
                       {r.ppImprovement > 0 ? '+' : ''}{r.ppImprovement}pp ({r.rawImprovement >= 0 ? '+' : ''}{r.rawImprovement})
                     </td>
+                    <td className="px-3 py-3 text-gray-400">{new Date(r.completedAt).toLocaleDateString()}</td>
                   </tr>
                 ))}
               </tbody>
@@ -311,11 +394,12 @@ export const AdminDashboardPage: React.FC = () => {
               <table className="w-full text-sm text-left">
                 <thead className="text-xs text-gray-400 uppercase bg-black/20">
                   <tr>
-                    <th className="px-3 py-2 rounded-l-lg">Name</th>
-                    <th className="px-3 py-2">Email</th>
-                    <th className="px-3 py-2">Role</th>
-                    <th className="px-3 py-2">Joined</th>
-                    <th className="px-3 py-2 rounded-r-lg">Quiz Attempts</th>
+                    <SortHeader label="Name" field="name" active={userSortBy} order={userSortOrder} onClick={toggleUserSort} className="rounded-l-lg" />
+                    <SortHeader label="Email" field="email" active={userSortBy} order={userSortOrder} onClick={toggleUserSort} />
+                    <SortHeader label="Role" field="role" active={userSortBy} order={userSortOrder} onClick={toggleUserSort} />
+                    <SortHeader label="Joined" field="createdAt" active={userSortBy} order={userSortOrder} onClick={toggleUserSort} />
+                    <SortHeader label="Quiz Attempts" field="quizAttemptCount" active={userSortBy} order={userSortOrder} onClick={toggleUserSort} />
+                    <th className="px-3 py-2 rounded-r-lg text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -329,7 +413,23 @@ export const AdminDashboardPage: React.FC = () => {
                         </span>
                       </td>
                       <td className="px-3 py-3 text-gray-400">{new Date(u.createdAt).toLocaleDateString()}</td>
-                      <td className="px-3 py-3 text-gray-300">{u.quizAttemptCount}</td>
+                      <td className="px-3 py-3 text-gray-300">{u.role === 'ADMIN' ? <span className="text-gray-600">—</span> : u.quizAttemptCount}</td>
+                      <td className="px-3 py-3 text-right">
+                        <button
+                          onClick={() => { setDeleteError(null); setDeleteTarget(u); }}
+                          disabled={u.id === user?.id || u.role === 'ADMIN'}
+                          title={
+                            u.id === user?.id
+                              ? "You can't delete your own account here — use Settings."
+                              : u.role === 'ADMIN'
+                                ? 'Admin accounts cannot be deleted.'
+                                : `Delete ${u.name}`
+                          }
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-500/20 hover:bg-red-500/10 hover:border-red-500/40 disabled:opacity-25 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-colors"
+                        >
+                          <Trash2 size={13} /> Delete
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -359,6 +459,16 @@ export const AdminDashboardPage: React.FC = () => {
           {exporting ? <><Loader2 size={16} className="animate-spin" /> Generating report...</> : <><Download size={16} /> Export Excel Report</>}
         </button>
       </div>
+
+      {deleteTarget && (
+        <DeleteUserModal
+          target={deleteTarget}
+          deleting={deleting}
+          error={deleteError}
+          onCancel={() => { if (!deleting) { setDeleteTarget(null); setDeleteError(null); } }}
+          onConfirm={handleDeleteUser}
+        />
+      )}
     </div>
   );
 };
@@ -454,6 +564,76 @@ const ErrorPill = ({ message }: { message: string }) => (
   <div className="flex items-center gap-3 bg-red-950/30 border border-red-500/30 text-red-200 text-sm px-4 py-3 rounded-xl mb-4">
     <AlertTriangle size={16} className="flex-shrink-0 text-red-400" />
     <span>{message}</span>
+  </div>
+);
+
+// Clickable, sortable column header — shared by the Registered Users and
+// User-Level Improvement tables. Clicking the already-active column flips
+// direction; clicking a different column switches to it ascending.
+function SortHeader<F extends string>({
+  label, field, active, order, onClick, className = '',
+}: { label: string; field: F; active: F; order: SortOrder; onClick: (field: F) => void; className?: string }) {
+  const isActive = active === field;
+  return (
+    <th
+      onClick={() => onClick(field)}
+      className={`px-3 py-2 cursor-pointer select-none hover:text-gray-200 transition-colors ${className}`}
+      title={`Sort by ${label}`}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {isActive ? (
+          order === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />
+        ) : (
+          <ArrowUpDown size={11} className="opacity-30" />
+        )}
+      </span>
+    </th>
+  );
+}
+
+const DeleteUserModal = ({
+  target, deleting, error, onCancel, onConfirm,
+}: { target: AdminUser; deleting: boolean; error: string | null; onCancel: () => void; onConfirm: () => void }) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onCancel}>
+    <motion.div
+      initial={{ opacity: 0, scale: 0.96 }}
+      animate={{ opacity: 1, scale: 1 }}
+      onClick={(e) => e.stopPropagation()}
+      className="w-full max-w-md glass-card rounded-2xl border border-red-500/30 bg-[#0f1629] p-6"
+    >
+      <div className="flex items-center gap-3 mb-4">
+        <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/30">
+          <Trash2 className="text-red-400" size={20} />
+        </div>
+        <h3 className="text-lg font-bold text-white">Delete account</h3>
+      </div>
+      <p className="text-sm text-gray-300 mb-2">
+        Permanently delete <span className="font-semibold text-white">{target.name}</span> ({target.email})?
+      </p>
+      <p className="text-xs text-gray-500 mb-5">
+        This removes the account and all of its Scenario Assessment, Pre/Post-test, and Practice Lab data. This cannot be undone.
+      </p>
+
+      {error && <ErrorPill message={error} />}
+
+      <div className="flex justify-end gap-3">
+        <button
+          onClick={onCancel}
+          disabled={deleting}
+          className="px-4 py-2.5 rounded-xl border border-cyber-border text-gray-300 text-sm font-medium hover:bg-white/5 disabled:opacity-50 transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={deleting}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-600/90 hover:bg-red-600 disabled:bg-red-900 text-white text-sm font-semibold transition-colors"
+        >
+          {deleting ? <><Loader2 size={14} className="animate-spin" /> Deleting...</> : 'Delete permanently'}
+        </button>
+      </div>
+    </motion.div>
   </div>
 );
 

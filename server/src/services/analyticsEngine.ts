@@ -168,17 +168,29 @@ export class AnalyticsEngine {
 
   /**
    * One point per completed assessment (not per calendar day — a learner may
-   * complete zero or several assessments on a given day), oldest first, for
-   * the "Performance Over Time" chart.
+   * complete zero or several assessments on a given day, and two same-day
+   * points must still be visually distinct on the chart), for the
+   * "Performance Over Time" chart. `session` is a sequential, always-unique
+   * label ("Session 1", "Session 2", ...) meant for the X axis itself —
+   * `date`/`time` are the real completion timestamp, for the tooltip.
+   *
+   * Fetches the most recent `limit` completions (not the oldest — an
+   * account with more than `limit` total sessions must still show its
+   * *current* trend, not get stuck forever on its earliest history), then
+   * reverses to chronological order so the chart still reads oldest-to-
+   * newest left-to-right.
    */
   static async getPerformanceTrends(userId: string, limit = 10) {
     const snapshots = await prisma.assessmentSnapshot.findMany({
       where: { userId },
-      orderBy: { completedAt: 'asc' },
+      orderBy: { completedAt: 'desc' },
       take: limit,
     });
-    return snapshots.map((s) => ({
+    const chronological = snapshots.reverse();
+    return chronological.map((s, i) => ({
+      session: `Session ${i + 1}`,
       date: s.completedAt.toISOString().split('T')[0],
+      time: s.completedAt.toISOString().split('T')[1].slice(0, 5),
       accuracy: Math.round(s.accuracy),
       responseTime: Math.round(s.averageTime),
     }));

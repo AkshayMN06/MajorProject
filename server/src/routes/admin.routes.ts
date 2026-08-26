@@ -13,6 +13,7 @@ import {
   computePairMath,
   type CompletedPairFilters,
 } from '../services/adminAnalytics';
+import { buildUserDeletionOps } from '../services/userDeletion';
 
 const prisma = new PrismaClient();
 const router = Router();
@@ -84,17 +85,34 @@ router.get('/analytics', validate(adminAnalyticsQuerySchema), async (req: AuthRe
   }
 });
 
-// GET /api/admin/users?search=&page=&pageSize= — server-side paginated,
-// never loads the full user table into one response.
+// Only these columns are ever sortable — keeps the query shape predictable
+// and rules out sorting by anything sensitive (password is never selected
+// anywhere in this route regardless).
+const USER_SORT_FIELDS = ['name', 'email', 'role', 'createdAt', 'quizAttemptCount'] as const;
+type UserSortField = (typeof USER_SORT_FIELDS)[number];
+
+function parseUserSort(req: AuthRequest): { sortBy: UserSortField; sortOrder: 'asc' | 'desc' } {
+  const rawSortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy : '';
+  const sortBy = (USER_SORT_FIELDS as readonly string[]).includes(rawSortBy) ? (rawSortBy as UserSortField) : 'createdAt';
+  const sortOrder = req.query.sortOrder === 'asc' ? 'asc' : 'desc';
+  return { sortBy, sortOrder };
+}
+
+// GET /api/admin/users?search=&page=&pageSize=&sortBy=&sortOrder= —
+// server-side paginated AND server-side sorted, so sort order stays
+// consistent across pages instead of only sorting whatever page happens to
+// be in the browser's memory.
 router.get('/users', validate(adminUsersQuerySchema), async (req: AuthRequest, res: Response) => {
   try {
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
+    const { sortBy, sortOrder } = parseUserSort(req);
 
     // Prisma's SQLite connector doesn't support `mode: 'insensitive'`; SQLite's
     // own LIKE (which `contains` compiles to) is already ASCII-case-insensitive.
     const where = search ? { OR: [{ name: { contains: search } }, { email: { contains: search } }] } : undefined;
+    const orderBy = sortBy === 'quizAttemptCount' ? { quizAttempts: { _count: sortOrder } } : { [sortBy]: sortOrder };
 
     const [users, total] = await Promise.all([
       prisma.user.findMany({
@@ -107,7 +125,7 @@ router.get('/users', validate(adminUsersQuerySchema), async (req: AuthRequest, r
           createdAt: true,
           _count: { select: { quizAttempts: true } },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
@@ -130,6 +148,37 @@ router.get('/users', validate(adminUsersQuerySchema), async (req: AuthRequest, r
         pageSize,
       },
     });
+  } catch (err: any) {
+    handleError(res, err);
+  }
+});
+
+// DELETE /api/admin/users/:id — permanently deletes the target account and
+// every row that references it (see userDeletion.ts for why this can't be
+// a simple `prisma.user.delete` — sessions are shared between two
+// participants and every FK in this schema is RESTRICT). Admins cannot
+// delete their own account through this endpoint — that's a deliberate,
+// more consequential action gated behind the existing password-confirmed
+// self-delete flow in user.routes.ts instead — nor can they delete ANY
+// admin account (including other admins'), so account deletion here is
+// scoped strictly to regular USER accounts.
+router.delete('/users/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const targetId = String(req.params.id);
+
+    if (targetId === req.user.id) {
+      return res.status(400).json({ success: false, error: 'Use your account settings to delete your own account.' });
+    }
+
+    const target = await prisma.user.findUnique({ where: { id: targetId }, select: { id: true, email: true, name: true, role: true } });
+    if (!target) return res.status(404).json({ success: false, error: 'User not found' });
+    if (target.role === 'ADMIN') {
+      return res.status(400).json({ success: false, error: 'Admin accounts cannot be deleted.' });
+    }
+
+    await prisma.$transaction(buildUserDeletionOps(prisma, targetId));
+
+    res.json({ success: true, data: { id: target.id, email: target.email, name: target.name } });
   } catch (err: any) {
     handleError(res, err);
   }

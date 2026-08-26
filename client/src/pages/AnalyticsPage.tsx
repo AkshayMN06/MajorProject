@@ -165,12 +165,21 @@ export const AnalyticsPage: React.FC = () => {
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={trends} margin={{ top: 5, right: 30, left: 0, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-                      <XAxis dataKey="date" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} dy={10} />
+                      {/* Keyed by a sequential per-session label, not the raw
+                          date — two assessments completed the same day would
+                          otherwise share an X-axis position and become
+                          visually indistinguishable. The real date/time still
+                          shows in the tooltip below. */}
+                      <XAxis dataKey="session" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} dy={10} />
                       <YAxis yAxisId="left" stroke="#a855f7" fontSize={12} tickLine={false} axisLine={false} domain={[0, 100]} />
                       <YAxis yAxisId="right" orientation="right" stroke="#22d3ee" fontSize={12} tickLine={false} axisLine={false} />
                       <RechartsTooltip
                         contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
                         itemStyle={{ color: '#e2e8f0' }}
+                        labelFormatter={(label: string, payload) => {
+                          const point = payload?.[0]?.payload as PerformanceTrendPoint | undefined;
+                          return point ? `${label} — ${point.date} ${point.time}` : label;
+                        }}
                       />
                       <Line yAxisId="left" type="monotone" dataKey="accuracy" name="Accuracy (%)" stroke="#a855f7" strokeWidth={3} dot={{ r: 4, fill: '#a855f7' }} activeDot={{ r: 6 }} />
                       <Line yAxisId="right" type="monotone" dataKey="responseTime" name="Avg Time (s)" stroke="#22d3ee" strokeWidth={3} dot={{ r: 4, fill: '#22d3ee' }} activeDot={{ r: 6 }} />

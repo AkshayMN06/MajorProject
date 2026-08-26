@@ -71,7 +71,9 @@ export interface AnalyticsSummary {
 }
 
 export interface PerformanceTrendPoint {
+  session: string; // sequential, always-unique label ("Session 1", "Session 2", ...) — the chart's X axis key
   date: string;
+  time: string;
   accuracy: number;
   responseTime: number;
 }
@@ -334,8 +336,9 @@ export const adminApi = {
     unwrap<{ overall: AdminOverallStats; rows: AdminImprovementRow[]; moduleSummary: AdminCategoryAggregate[]; difficultySummary: AdminCategoryAggregate[] }>(
       apiClient.get('/admin/analytics', { params: filters })
     ),
-  getUsers: (params: { search?: string; page?: number; pageSize?: number } = {}) =>
+  getUsers: (params: { search?: string; page?: number; pageSize?: number; sortBy?: string; sortOrder?: 'asc' | 'desc' } = {}) =>
     unwrap<{ users: AdminUser[]; total: number; page: number; pageSize: number }>(apiClient.get('/admin/users', { params })),
+  deleteUser: (id: string) => unwrap<{ id: string; email: string; name: string }>(apiClient.delete(`/admin/users/${id}`)),
   // Bypasses unwrap for a raw blob download, matching exportApi's pattern.
   // Overrides the default 10s apiClient timeout — the full export can take
   // longer than that.

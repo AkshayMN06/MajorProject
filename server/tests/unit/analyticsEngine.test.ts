@@ -172,23 +172,38 @@ describe('AnalyticsEngine', () => {
   });
 
   describe('getPerformanceTrends', () => {
-    it('maps AssessmentSnapshot rows to {date, accuracy, responseTime} points, oldest first', async () => {
+    it('fetches the most recent N completions (desc), then returns them chronological (oldest first) with sequential session labels', async () => {
+      // The DB query itself is desc (most recent first) — the function
+      // reverses this so the chart still reads oldest-to-newest left-to-right.
       mocks.mockSnapshotFindMany.mockResolvedValue([
-        { completedAt: new Date('2026-08-01T00:00:00Z'), accuracy: 75.4, averageTime: 22.6 },
-        { completedAt: new Date('2026-08-03T00:00:00Z'), accuracy: 88.0, averageTime: 15.2 },
+        { completedAt: new Date('2026-08-03T15:20:00Z'), accuracy: 88.0, averageTime: 15.2 },
+        { completedAt: new Date('2026-08-01T09:05:00Z'), accuracy: 75.4, averageTime: 22.6 },
       ]);
 
       const result = await AnalyticsEngine.getPerformanceTrends('u1');
 
       expect(mocks.mockSnapshotFindMany).toHaveBeenCalledWith({
         where: { userId: 'u1' },
-        orderBy: { completedAt: 'asc' },
+        orderBy: { completedAt: 'desc' },
         take: 10,
       });
       expect(result).toEqual([
-        { date: '2026-08-01', accuracy: 75, responseTime: 23 },
-        { date: '2026-08-03', accuracy: 88, responseTime: 15 },
+        { session: 'Session 1', date: '2026-08-01', time: '09:05', accuracy: 75, responseTime: 23 },
+        { session: 'Session 2', date: '2026-08-03', time: '15:20', accuracy: 88, responseTime: 15 },
       ]);
+    });
+
+    it('gives two same-day completions distinct session labels and times, so neither point is lost on the chart', async () => {
+      mocks.mockSnapshotFindMany.mockResolvedValue([
+        { completedAt: new Date('2026-08-20T14:00:00Z'), accuracy: 60, averageTime: 10 },
+        { completedAt: new Date('2026-08-20T09:00:00Z'), accuracy: 40, averageTime: 5 },
+      ]);
+
+      const result = await AnalyticsEngine.getPerformanceTrends('u1');
+
+      expect(result.map((r) => r.session)).toEqual(['Session 1', 'Session 2']);
+      expect(result[0].date).toBe(result[1].date); // same calendar day
+      expect(result[0].time).not.toBe(result[1].time); // still distinguishable
     });
 
     it('returns an empty array when the user has no completed assessments yet', async () => {

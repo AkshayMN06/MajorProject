@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { AnalyticsEngine } from '../services/analyticsEngine';
+import { buildUserDeletionOps } from '../services/userDeletion';
 
 const prisma = new PrismaClient();
 const router = Router();
@@ -98,17 +99,11 @@ router.delete('/me', async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ success: false, error: 'Incorrect password. Account not deleted.' });
     }
 
-    // Cascade delete all user data then the user record
-    await prisma.$transaction([
-      prisma.recommendation.deleteMany({ where: { userId: user.id } }),
-      prisma.analytics.deleteMany({ where: { userId: user.id } }),
-      prisma.score.deleteMany({ where: { userId: user.id } }),
-      prisma.attempt.deleteMany({ where: { userId: user.id } }),
-      prisma.session.deleteMany({
-        where: { OR: [{ attackerId: user.id }, { defenderId: user.id }] }
-      }),
-      prisma.user.delete({ where: { id: user.id } }),
-    ]);
+    // Cascade delete all user data then the user record — see
+    // userDeletion.ts for why this needs to be a full ordered cascade
+    // rather than a handful of ad-hoc deleteMany calls (shared sessions,
+    // RESTRICT-only FKs).
+    await prisma.$transaction(buildUserDeletionOps(prisma, user.id));
 
     res.json({ success: true, message: 'Account permanently deleted.' });
   } catch (err: any) {
