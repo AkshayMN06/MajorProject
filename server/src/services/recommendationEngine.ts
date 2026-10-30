@@ -8,17 +8,26 @@ export class RecommendationEngine {
     const categories = await AnalyticsEngine.getCategoryAccuracy(userId);
     const existingRecs = await prisma.recommendation.findMany({ where: { userId, isCompleted: false } });
 
+    // Module.category matches Scenario.category (see moduleData.ts) — one
+    // lookup up front so every 'module'/'topic' recommendation below can
+    // link straight to the matching curriculum module instead of leaving
+    // moduleId unset.
+    const modules = await prisma.module.findMany({ select: { id: true, category: true } });
+    const moduleIdByCategory = new Map(modules.map((m) => [m.category, m.id]));
+
     const newRecs = [];
 
     // IF accuracy < 50% in a category -> Recommend beginner module (priority 1)
     // IF accuracy < 70% in a category -> Recommend intermediate module (priority 2)
     for (const cat of categories) {
+      const moduleId = moduleIdByCategory.get(cat.category);
       if (cat.accuracy < 50) {
         newRecs.push({
           userId,
           type: 'module',
           title: `Beginner Module: ${cat.category}`,
           description: `Your accuracy in ${cat.category} is low. Review the basics.`,
+          moduleId,
           priority: 1,
           isCompleted: false,
         });
@@ -28,25 +37,26 @@ export class RecommendationEngine {
           type: 'module',
           title: `Intermediate Module: ${cat.category}`,
           description: `You can improve your skills in ${cat.category}. Try intermediate topics.`,
+          moduleId,
           priority: 2,
           isCompleted: false,
         });
       }
-      
+
       // IF struggles with specific topics (mock implementations)
       if (cat.category === 'Web Security' && cat.accuracy < 50) {
         newRecs.push({
-          userId, type: 'module', title: 'Secure Coding Module', description: 'Focus on preventing Injection vulnerabilities.', priority: 1, isCompleted: false
+          userId, type: 'module', title: 'Secure Coding Module', description: 'Focus on preventing Injection vulnerabilities.', moduleId, priority: 1, isCompleted: false
         });
       }
       if (cat.category === 'Social Engineering' && cat.accuracy < 60) {
         newRecs.push({
-          userId, type: 'module', title: 'Authentication Module', description: 'Improve your resilience against phishing.', priority: 1, isCompleted: false
+          userId, type: 'module', title: 'Authentication Module', description: 'Improve your resilience against phishing.', moduleId, priority: 1, isCompleted: false
         });
       }
       if (cat.category === 'Network Security' && cat.accuracy < 50) {
         newRecs.push({
-          userId, type: 'module', title: 'Network Security Fundamentals', description: 'Review network defenses.', priority: 1, isCompleted: false
+          userId, type: 'module', title: 'Network Security Fundamentals', description: 'Review network defenses.', moduleId, priority: 1, isCompleted: false
         });
       }
     }
@@ -74,6 +84,7 @@ export class RecommendationEngine {
           type: 'topic',
           title: `Intro to ${cat}`,
           description: `Try scenarios in ${cat} to test your knowledge.`,
+          moduleId: moduleIdByCategory.get(cat),
           priority: 3,
           isCompleted: false,
         });

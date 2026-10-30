@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { SCENARIOS } from './scenarioData';
 import { buildRuleRows } from './ruleGeneration';
+import { MODULES } from './moduleData';
 
 const prisma = new PrismaClient();
 
@@ -29,27 +30,31 @@ async function main() {
     });
   }
 
-  // Modules
-  for (let i = 1; i <= 8; i++) {
+  // Modules — one per Scenario.category, with real curriculum content
+  // (see moduleData.ts). Kept in sync with reseedModules.ts, which
+  // regenerates this table independently on an already-seeded database.
+  for (const m of MODULES) {
     const module = await prisma.module.create({
       data: {
-        name: `Cyber Security Module ${i}`,
-        description: `Learn core concepts for topic ${i}.`,
-        category: 'General',
-        difficulty: 'Medium',
-        duration: 120,
-        type: 'theory',
+        name: m.name,
+        description: m.description,
+        category: m.category,
+        difficulty: m.difficulty,
+        duration: m.duration,
+        type: m.type,
         content: {},
-        order: i,
+        order: m.order,
       }
     });
 
     await prisma.lesson.createMany({
-      data: [
-        { moduleId: module.id, title: `Lesson 1 for Module ${i}`, content: 'Content 1', type: 'theory', order: 1 },
-        { moduleId: module.id, title: `Lesson 2 for Module ${i}`, content: 'Content 2', type: 'interactive', order: 2 },
-        { moduleId: module.id, title: `Lesson 3 for Module ${i}`, content: 'Content 3', type: 'quiz', order: 3 },
-      ]
+      data: m.lessons.map((l) => ({
+        moduleId: module.id,
+        title: l.title,
+        content: l.content,
+        type: l.type,
+        order: l.order,
+      }))
     });
   }
 

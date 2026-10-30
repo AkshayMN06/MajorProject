@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Terminal, Target, Shield, Plus, LogIn,
-  ChevronDown, Loader2, X, AlertCircle
+  Terminal, Target, Shield, Plus, LogIn, User,
+  ChevronDown, Loader2, X, AlertCircle, Shuffle
 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { apiClient } from '../../services/api';
@@ -10,7 +10,7 @@ import { apiClient } from '../../services/api';
 // ─── Create Session Modal ─────────────────────────────────────────────────────
 interface CreateModalProps {
   onClose: () => void;
-  onCreate: (opts: { difficulty: string; totalScenarios: number; module: string }) => void;
+  onCreate: (opts: { difficulty: string; totalScenarios: number; module: string; interleaved: boolean }) => void;
   isLoading: boolean;
   error: string | null;
 }
@@ -21,6 +21,7 @@ export const CreateSessionModal: React.FC<CreateModalProps> = ({
   const [difficulty, setDifficulty] = useState('Medium');
   const [rounds, setRounds] = useState(5);
   const [module, setModule] = useState('All Modules');
+  const [interleaved, setInterleaved] = useState(false);
   const [categories, setCategories] = useState<string[]>([]);
 
   useEffect(() => {
@@ -31,7 +32,7 @@ export const CreateSessionModal: React.FC<CreateModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onCreate({ difficulty, totalScenarios: rounds, module });
+    onCreate({ difficulty, totalScenarios: rounds, module, interleaved });
   };
 
   const inputClass = 'w-full bg-[#0a0f1e] border border-gray-700 rounded-lg py-2.5 px-4 text-white text-sm focus:outline-none focus:border-indigo-500 transition-colors';
@@ -80,7 +81,8 @@ export const CreateSessionModal: React.FC<CreateModalProps> = ({
               <select
                 value={module}
                 onChange={e => setModule(e.target.value)}
-                className="w-full appearance-none bg-[#0a0f1e] border border-gray-700 rounded-lg py-2.5 pl-4 pr-9 text-white text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+                disabled={interleaved}
+                className="w-full appearance-none bg-[#0a0f1e] border border-gray-700 rounded-lg py-2.5 pl-4 pr-9 text-white text-sm focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <option value="All Modules">All Modules</option>
                 {categories.map(cat => (
@@ -90,6 +92,20 @@ export const CreateSessionModal: React.FC<CreateModalProps> = ({
               <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
             </div>
           </div>
+
+          <label className="flex items-center gap-3 bg-[#0a0f1e] border border-gray-700 rounded-lg py-2.5 px-4 cursor-pointer hover:border-gray-600 transition-colors">
+            <input
+              type="checkbox"
+              checked={interleaved}
+              onChange={e => setInterleaved(e.target.checked)}
+              className="accent-indigo-500 w-4 h-4"
+            />
+            <Shuffle size={14} className="text-indigo-400 flex-shrink-0" />
+            <div className="flex-1">
+              <span className="text-sm text-white font-medium">Interleaved (mixed modules)</span>
+              <p className="text-xs text-gray-500">Draws scenarios across every module instead of just one — harder, but builds stronger discrimination.</p>
+            </div>
+          </label>
 
           <div>
             <label className="block text-xs text-gray-400 mb-2 font-medium">Difficulty</label>
@@ -147,6 +163,200 @@ export const CreateSessionModal: React.FC<CreateModalProps> = ({
             >
               {isLoading ? <Loader2 size={15} className="animate-spin" /> : <Target size={15} />}
               {isLoading ? 'Creating...' : 'Create Session'}
+            </button>
+          </div>
+        </form>
+      </motion.div>
+    </motion.div>
+  );
+};
+
+// ─── Practice Solo Modal ──────────────────────────────────────────────────────
+interface SoloModalProps {
+  onClose: () => void;
+  onStart: (opts: { difficulty: string; totalScenarios: number; module: string; soloRole: 'ATTACKER' | 'DEFENDER'; interleaved: boolean }) => void;
+  isLoading: boolean;
+  error: string | null;
+}
+
+export const PracticeSoloModal: React.FC<SoloModalProps> = ({
+  onClose, onStart, isLoading, error,
+}) => {
+  const [difficulty, setDifficulty] = useState('Medium');
+  const [rounds, setRounds] = useState(5);
+  const [module, setModule] = useState('All Modules');
+  const [soloRole, setSoloRole] = useState<'ATTACKER' | 'DEFENDER'>('DEFENDER');
+  const [interleaved, setInterleaved] = useState(false);
+  const [categories, setCategories] = useState<string[]>([]);
+
+  useEffect(() => {
+    apiClient.get('/scenarios/categories')
+      .then((res) => setCategories(res.data.data ?? []))
+      .catch(() => setCategories([]));
+  }, []);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onStart({ difficulty, totalScenarios: rounds, module, soloRole, interleaved });
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.93, opacity: 0, y: 16 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.93, opacity: 0 }}
+        transition={{ type: 'spring', stiffness: 320, damping: 28 }}
+        className="bg-[#0f1629] border border-[#1e293b] rounded-2xl p-7 w-full max-w-md shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
+              <User size={17} className="text-indigo-400" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-white">Practice Solo</h3>
+              <p className="text-xs text-gray-500">Play both sides yourself — no partner needed</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-gray-600 hover:text-gray-300 transition-colors p-1">
+            <X size={18} />
+          </button>
+        </div>
+
+        {error && (
+          <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 text-red-400 text-sm px-4 py-3 rounded-xl mb-4">
+            <AlertCircle size={14} /> {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label className="block text-xs text-gray-400 mb-2 font-medium">Your Role</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setSoloRole('ATTACKER')}
+                className={`py-2.5 rounded-xl text-sm font-medium border transition-all flex items-center justify-center gap-2 ${
+                  soloRole === 'ATTACKER'
+                    ? 'bg-red-500/15 border-red-500/50 text-red-400'
+                    : 'bg-[#0a0f1e] border-gray-700 text-gray-500 hover:border-gray-600'
+                }`}
+              >
+                <Target size={14} /> Attacker
+              </button>
+              <button
+                type="button"
+                onClick={() => setSoloRole('DEFENDER')}
+                className={`py-2.5 rounded-xl text-sm font-medium border transition-all flex items-center justify-center gap-2 ${
+                  soloRole === 'DEFENDER'
+                    ? 'bg-teal-500/15 border-teal-500/50 text-teal-400'
+                    : 'bg-[#0a0f1e] border-gray-700 text-gray-500 hover:border-gray-600'
+                }`}
+              >
+                <Shield size={14} /> Defender
+              </button>
+            </div>
+            <p className="text-xs text-gray-600 mt-2">
+              The system will play the {soloRole === 'ATTACKER' ? 'defender' : 'attacker'} side each round.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-2 font-medium">Assessment Module</label>
+            <div className="relative">
+              <select
+                value={module}
+                onChange={e => setModule(e.target.value)}
+                disabled={interleaved}
+                className="w-full appearance-none bg-[#0a0f1e] border border-gray-700 rounded-lg py-2.5 pl-4 pr-9 text-white text-sm focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <option value="All Modules">All Modules</option>
+                {categories.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+            </div>
+          </div>
+
+          <label className="flex items-center gap-3 bg-[#0a0f1e] border border-gray-700 rounded-lg py-2.5 px-4 cursor-pointer hover:border-gray-600 transition-colors">
+            <input
+              type="checkbox"
+              checked={interleaved}
+              onChange={e => setInterleaved(e.target.checked)}
+              className="accent-indigo-500 w-4 h-4"
+            />
+            <Shuffle size={14} className="text-indigo-400 flex-shrink-0" />
+            <div className="flex-1">
+              <span className="text-sm text-white font-medium">Interleaved (mixed modules)</span>
+              <p className="text-xs text-gray-500">Draws scenarios across every module instead of just one — harder, but builds stronger discrimination.</p>
+            </div>
+          </label>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-2 font-medium">Difficulty</label>
+            <div className="grid grid-cols-3 gap-2">
+              {['Easy', 'Medium', 'Hard'].map(d => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setDifficulty(d)}
+                  className={`py-2.5 rounded-xl text-sm font-medium border transition-all ${
+                    difficulty === d
+                      ? d === 'Easy'
+                        ? 'bg-green-500/15 border-green-500/50 text-green-400'
+                        : d === 'Medium'
+                        ? 'bg-yellow-500/15 border-yellow-500/50 text-yellow-400'
+                        : 'bg-red-500/15 border-red-500/50 text-red-400'
+                      : 'bg-[#0a0f1e] border-gray-700 text-gray-500 hover:border-gray-600'
+                  }`}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-2 font-medium">
+              Number of Rounds: <span className="text-white">{rounds}</span>
+            </label>
+            <input
+              type="range"
+              min={2}
+              max={10}
+              value={rounds}
+              onChange={e => setRounds(Number(e.target.value))}
+              className="w-full accent-indigo-500 cursor-pointer"
+            />
+            <div className="flex justify-between text-xs text-gray-600 mt-1">
+              <span>2</span><span>10</span>
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-3 rounded-xl border border-gray-700 text-gray-400 hover:bg-gray-800/50 transition-colors text-sm"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="flex-1 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-[0_0_20px_rgba(99,102,241,0.4)] transition-shadow"
+            >
+              {isLoading ? <Loader2 size={15} className="animate-spin" /> : <User size={15} />}
+              {isLoading ? 'Starting...' : 'Start Solo Practice'}
             </button>
           </div>
         </form>
@@ -252,9 +462,10 @@ export const JoinSessionModal: React.FC<JoinModalProps> = ({
 interface LandingViewProps {
   onCreateClick: () => void;
   onJoinClick: () => void;
+  onSoloClick: () => void;
 }
 
-export const LandingView: React.FC<LandingViewProps> = ({ onCreateClick, onJoinClick }) => {
+export const LandingView: React.FC<LandingViewProps> = ({ onCreateClick, onJoinClick, onSoloClick }) => {
   const { user } = useAuthStore();
 
   return (
@@ -272,8 +483,8 @@ export const LandingView: React.FC<LandingViewProps> = ({ onCreateClick, onJoinC
             Scenario Assessment
           </h1>
           <p className="text-gray-400 text-base max-w-lg mx-auto leading-relaxed">
-            A collaborative cybersecurity assessment where two students take on the roles of
-            Attacker and Defender across real-world scenarios.
+            A cybersecurity assessment where students take on the roles of Attacker and Defender
+            across real-world scenarios — with a partner, or solo against the system.
           </p>
           {user && (
             <p className="text-sm text-gray-600 mt-3">
@@ -282,7 +493,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onCreateClick, onJoinC
           )}
         </motion.div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
           <motion.button
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -322,6 +533,27 @@ export const LandingView: React.FC<LandingViewProps> = ({ onCreateClick, onJoinC
             </p>
             <span className="flex items-center gap-2 text-sm font-semibold text-teal-400 group-hover:text-teal-300">
               <LogIn size={15} /> Enter Session Code
+            </span>
+          </motion.button>
+
+          <motion.button
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.3 }}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={onSoloClick}
+            className="bg-[#0f1629]/80 border border-indigo-500/20 hover:border-indigo-500/50 p-7 rounded-2xl flex flex-col items-center text-center transition-all group hover:bg-indigo-950/10"
+          >
+            <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+              <User className="w-7 h-7 text-indigo-400" />
+            </div>
+            <h2 className="text-lg font-bold text-white mb-2">Practice Solo</h2>
+            <p className="text-sm text-gray-400 leading-relaxed mb-4">
+              No partner? Play <span className="text-indigo-400">either role</span> yourself — the system plays the other side each round.
+            </p>
+            <span className="flex items-center gap-2 text-sm font-semibold text-indigo-400 group-hover:text-indigo-300">
+              <User size={15} /> Start Solo
             </span>
           </motion.button>
         </div>

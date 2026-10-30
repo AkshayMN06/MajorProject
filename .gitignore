@@ -6,6 +6,8 @@ node_modules/
 # Prisma local database
 server/prisma/*.db
 server/prisma/*.db-*
+server/prisma/*.db.*
+*.tsbuildinfo
 
 # Temporary/generated Prisma files
 server/node_modules/
@@ -16,3 +18,10 @@ server/node_modules/
 # Build files
 dist/
 build/
+
+# One-off local data-seeding scripts containing real personal data (names/emails) —
+# never meant to be committed or pushed.
+server/prisma/seedClassDemo.ts
+server/prisma/seedClassDemoQuiz.ts
+server/prisma/generateStudentReportPdf.ts
+server/student-report.pdf

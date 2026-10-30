@@ -22,3 +22,14 @@ export const adminUsersQuerySchema = z.object({
 });
 
 export const adminExportQuerySchema = adminAnalyticsQuerySchema;
+
+export const adminSecurityEventsQuerySchema = z.object({
+  body: z.object({}).optional(),
+  query: z.object({
+    userId: z.string().min(1).optional(),
+    type: z.string().min(1).optional(),
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  }),
+  params: z.object({}).optional(),
+});

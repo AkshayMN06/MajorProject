@@ -1,14 +1,14 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Mail, Lock, Eye, EyeOff, Shield, Loader2 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Mail, Lock, Eye, EyeOff, Shield, Loader2, AlertTriangle } from 'lucide-react';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { usePageTitle } from '../hooks/usePageTitle';
 
 export const LoginPage: React.FC = () => {
   usePageTitle('Sign In');
   const navigate = useNavigate();
-  const { login, isLoading, error, clearError } = useAuthStore();
+  const { login, isLoading, error, lockedUntil, clearError } = useAuthStore();
   
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
@@ -46,7 +46,20 @@ export const LoginPage: React.FC = () => {
           <p className="text-xs text-cyber-blue tracking-widest mt-2 font-mono">LEARN. ASSESS. IMPROVE.</p>
         </div>
 
-        {error && (
+        {error && lockedUntil && (
+          <div className="mb-4 p-3 rounded-lg bg-amber-900/30 border border-amber-500/50 text-amber-300 text-sm flex items-start gap-2">
+            <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-medium">Account temporarily locked</p>
+              <p className="text-amber-400/80 mt-0.5">
+                Too many failed attempts. Try again after {new Date(lockedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.
+              </p>
+            </div>
+            <button onClick={clearError} className="text-amber-400 hover:text-white">&times;</button>
+          </div>
+        )}
+
+        {error && !lockedUntil && (
           <div className="mb-4 p-3 rounded-lg bg-red-900/30 border border-red-500/50 text-red-400 text-sm flex items-center justify-between">
             <span>{error}</span>
             <button onClick={clearError} className="text-red-400 hover:text-white">&times;</button>
@@ -92,7 +105,7 @@ export const LoginPage: React.FC = () => {
               </button>
             </div>
             <div className="flex justify-end pt-1">
-              <a href="#" className="text-xs text-cyber-blue hover:underline">Forgot password?</a>
+              <Link to="/forgot-password" className="text-xs text-cyber-blue hover:underline">Forgot password?</Link>
             </div>
           </div>
 

@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   mockFindMany: vi.fn(),
   mockCreate: vi.fn(),
   mockUpdate: vi.fn(),
+  mockModuleFindMany: vi.fn(),
   mockGetCategoryAccuracy: vi.fn(),
   mockGetAnalyticsSummary: vi.fn(),
 }));
@@ -14,6 +15,9 @@ vi.mock('@prisma/client', () => {
       findMany: mocks.mockFindMany,
       create: mocks.mockCreate,
       update: mocks.mockUpdate,
+    },
+    module: {
+      findMany: mocks.mockModuleFindMany,
     },
   };
   return { PrismaClient: vi.fn(() => mockPrisma) };
@@ -31,6 +35,10 @@ import { RecommendationEngine } from '../../src/services/recommendationEngine';
 describe('RecommendationEngine', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Category -> module lookup for Recommendation.moduleId — none of these
+    // tests assert on moduleId, so an empty module list (leaving it unset)
+    // is a safe default throughout.
+    mocks.mockModuleFindMany.mockResolvedValue([]);
   });
 
   describe('generateRecommendations', () => {

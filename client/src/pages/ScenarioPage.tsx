@@ -4,7 +4,7 @@ import { AlertCircle, X, Loader2 } from 'lucide-react';
 
 import { useScenarioSession } from '../hooks/useScenarioSession';
 import { quizApi } from '../services/api';
-import { LandingView, CreateSessionModal, JoinSessionModal } from '../components/scenario/SessionModals';
+import { LandingView, CreateSessionModal, JoinSessionModal, PracticeSoloModal } from '../components/scenario/SessionModals';
 import WaitingRoom from '../components/scenario/WaitingState';
 import AttackerView from '../components/scenario/AttackerView';
 import DefenderView from '../components/scenario/DefenderView';
@@ -40,6 +40,7 @@ export const ScenarioPage: React.FC = () => {
   const {
     state,
     createSession,
+    createSoloSession,
     joinSession,
     rehydrateActiveSession,
     markReady,
@@ -53,6 +54,7 @@ export const ScenarioPage: React.FC = () => {
 
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin] = useState(false);
+  const [showSolo, setShowSolo] = useState(false);
 
   const { phase, role, scenario } = state;
 
@@ -120,7 +122,7 @@ export const ScenarioPage: React.FC = () => {
     return () => { cancelled = true; };
   }, [phase, state.sessionId]);
 
-  const handleCreate = async (opts: { difficulty: string; totalScenarios: number; module: string }) => {
+  const handleCreate = async (opts: { difficulty: string; totalScenarios: number; module: string; interleaved: boolean }) => {
     await createSession(opts);
     setShowCreate(false);
   };
@@ -128,6 +130,11 @@ export const ScenarioPage: React.FC = () => {
   const handleJoin = async (code: string) => {
     await joinSession(code);
     setShowJoin(false);
+  };
+
+  const handleSolo = async (opts: { difficulty: string; totalScenarios: number; module: string; soloRole: 'ATTACKER' | 'DEFENDER'; interleaved: boolean }) => {
+    await createSoloSession(opts);
+    setShowSolo(false);
   };
 
   // Main render switch based on session phase
@@ -151,6 +158,7 @@ export const ScenarioPage: React.FC = () => {
           <LandingView
             onCreateClick={() => setShowCreate(true)}
             onJoinClick={() => setShowJoin(true)}
+            onSoloClick={() => setShowSolo(true)}
           />
         );
 
@@ -332,6 +340,17 @@ export const ScenarioPage: React.FC = () => {
           <JoinSessionModal
             onClose={() => { setShowJoin(false); clearError(); }}
             onJoin={handleJoin}
+            isLoading={state.isLoading}
+            error={state.error}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showSolo && (
+          <PracticeSoloModal
+            onClose={() => { setShowSolo(false); clearError(); }}
+            onStart={handleSolo}
             isLoading={state.isLoading}
             error={state.error}
           />

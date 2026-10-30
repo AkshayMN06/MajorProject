@@ -23,6 +23,8 @@ model User {
   preferredRole String?
   timezone      String?
   role          String           @default("USER") // 'USER' | 'ADMIN' — never placed in the JWT; authenticate() reloads this from the DB on every request, so promotion/demotion takes effect immediately without re-login
+  failedLoginCount Int           @default(0)
+  lockedUntil   DateTime?
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
 
@@ -35,8 +37,43 @@ model User {
   quizAttempts     QuizAttempt[]
   assessmentSnapshots AssessmentSnapshot[]
   practiceSessions PracticeSession[]
+  lessonProgress   LessonProgress[]
+  securityEvents   SecurityEvent[]
+  passwordResetTokens PasswordResetToken[]
 
   @@map("users")
+}
+
+// Audit trail of authentication/account-security events — never used for
+// application logic, purely for an admin to review (GET /api/admin/security-events).
+model SecurityEvent {
+  id        String   @id @default(cuid())
+  userId    String? // null when the actor isn't a known user yet (e.g. failed login with a bad email)
+  email     String? // snapshot of the attempted email, for failed logins where userId is null
+  type      String   // 'LOGIN_SUCCESS' | 'LOGIN_FAILURE' | 'ACCOUNT_LOCKED' | 'PASSWORD_CHANGED' | 'PASSWORD_RESET_REQUESTED' | 'PASSWORD_RESET_COMPLETED'
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@map("security_events")
+}
+
+// One row per issued forgot-password link. tokenHash is sha256 of the raw
+// token mailed to the user — the raw token itself is never persisted, so a
+// database read alone can never be used to complete someone else's reset.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("password_reset_tokens")
 }
 
 model Session {
@@ -45,6 +82,8 @@ model Session {
   attackerId           String
   defenderId           String?
   status               String    @default("WAITING_FOR_PARTICIPANT")
+  mode                 String    @default("PAIRED") // 'PAIRED' | 'SOLO'
+  soloRole             String? // 'ATTACKER' | 'DEFENDER' — which role the human plays in a SOLO session; null for PAIRED. In SOLO, attackerId and defenderId are both the same human, and the other role's choice each round is system-generated (see sessionActions.ts).
   difficulty           String?
   module               String?
   currentScenarioIndex Int       @default(0)
@@ -417,7 +456,24 @@ model Lesson {
   type     String
   order    Int
 
-  module Module @relation(fields: [moduleId], references: [id])
+  module   Module           @relation(fields: [moduleId], references: [id])
+  progress LessonProgress[]
 
   @@map("lessons")
+}
+
+// One row per (user, completed lesson) — written when a learner finishes a
+// lesson in ModulesPage/LessonPage. Deliberately its own table rather than a
+// boolean on Lesson (which is shared across all users) or a field on User.
+model LessonProgress {
+  id          String   @id @default(cuid())
+  userId      String
+  lessonId    String
+  completedAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id])
+  lesson Lesson @relation(fields: [lessonId], references: [id])
+
+  @@unique([userId, lessonId])
+  @@map("lesson_progress")
 }

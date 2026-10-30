@@ -2,11 +2,12 @@ import { Router, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { validate } from '../middleware/validate';
-import { createSessionSchema, joinSessionSchema, readySchema } from '../validation/sessionSchemas';
+import { createSessionSchema, createSoloSessionSchema, joinSessionSchema, readySchema } from '../validation/sessionSchemas';
 import { getIO } from '../socket';
-import { markReady } from '../services/sessionActions';
+import { markReady, loadNextScenario } from '../services/sessionActions';
 import { buildAssessmentReport } from '../services/reportBuilder';
 import { transition, SessionState } from '../services/stateMachine';
+import { buildInterleavedScenarioSet } from '../services/interleavedScenarios';
 
 const prisma = new PrismaClient();
 const router = Router();
@@ -26,25 +27,45 @@ const generateSessionCode = async (): Promise<string> => {
   return code;
 };
 
+// Shared by /create and /solo. Interleaved sessions ignore the single-
+// category `moduleCategory` filter entirely (mixing categories is the
+// point) and round-robin across every category present instead of the
+// normal flat shuffle over one category's scenarios.
+async function selectScenarioIds({
+  difficulty,
+  moduleCategory,
+  totalScenarios,
+  interleaved,
+}: {
+  difficulty: string;
+  moduleCategory?: string;
+  totalScenarios: number;
+  interleaved?: boolean;
+}): Promise<string[]> {
+  const allScenarios = await prisma.scenario.findMany({
+    where: {
+      ...(difficulty !== 'All' ? { difficulty } : {}),
+      ...(!interleaved && moduleCategory && moduleCategory !== 'All Modules' ? { category: moduleCategory } : {}),
+    },
+  });
+
+  if (interleaved) {
+    return buildInterleavedScenarioSet(allScenarios, totalScenarios);
+  }
+
+  const shuffled = allScenarios.sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, Math.min(totalScenarios, shuffled.length)).map((s) => s.id);
+}
+
 // POST /api/sessions/create
 router.post('/create', validate(createSessionSchema), async (req: AuthRequest, res: Response) => {
   try {
-    const { difficulty = 'Medium', totalScenarios = 5, module: moduleCategory } = req.body;
+    const { difficulty = 'Medium', totalScenarios = 5, module: moduleCategory, interleaved } = req.body;
 
-    const allScenarios = await prisma.scenario.findMany({
-      where: {
-        ...(difficulty !== 'All' ? { difficulty } : {}),
-        ...(moduleCategory && moduleCategory !== 'All Modules' ? { category: moduleCategory } : {}),
-      },
-    });
-
-    if (allScenarios.length === 0) {
+    const scenarioIds = await selectScenarioIds({ difficulty, moduleCategory, totalScenarios, interleaved });
+    if (scenarioIds.length === 0) {
       return res.status(400).json({ success: false, error: 'No scenarios found for the selected module/difficulty' });
     }
-
-    const shuffled = allScenarios.sort(() => Math.random() - 0.5);
-    const selected = shuffled.slice(0, Math.min(totalScenarios, shuffled.length));
-    const scenarioIds = selected.map((s) => s.id);
     const actualTotal = scenarioIds.length;
 
     const sessionCode = await generateSessionCode();
@@ -56,7 +77,7 @@ router.post('/create', validate(createSessionSchema), async (req: AuthRequest, r
         attackerId: req.user.id,
         status: initialStatus,
         difficulty,
-        module: moduleCategory ?? null,
+        module: interleaved ? null : moduleCategory ?? null,
         totalScenarios: actualTotal,
         scenarioIds,
       },
@@ -73,6 +94,63 @@ router.post('/create', validate(createSessionSchema), async (req: AuthRequest, r
         difficulty: session.difficulty,
         module: session.module,
         totalScenarios: session.totalScenarios,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/sessions/solo — single-player practice: the creator occupies
+// both attacker and defender slots, and whichever role they didn't pick is
+// played by the system each round (see sessionActions.ts). Skips the
+// WAITING_FOR_PARTICIPANT/join handshake entirely and returns round 1
+// already loaded.
+router.post('/solo', validate(createSoloSessionSchema), async (req: AuthRequest, res: Response) => {
+  try {
+    const { difficulty = 'Medium', totalScenarios = 5, module: moduleCategory, soloRole, interleaved } = req.body;
+
+    const scenarioIds = await selectScenarioIds({ difficulty, moduleCategory, totalScenarios, interleaved });
+    if (scenarioIds.length === 0) {
+      return res.status(400).json({ success: false, error: 'No scenarios found for the selected module/difficulty' });
+    }
+    const actualTotal = scenarioIds.length;
+
+    const sessionCode = await generateSessionCode();
+    const readyStatus = transition(
+      transition(SessionState.START, SessionState.WAITING_FOR_PARTICIPANT),
+      SessionState.SESSION_READY
+    );
+
+    const session = await prisma.session.create({
+      data: {
+        sessionCode,
+        attackerId: req.user.id,
+        defenderId: req.user.id,
+        mode: 'SOLO',
+        soloRole,
+        status: readyStatus,
+        attackerReady: true,
+        defenderReady: true,
+        difficulty,
+        module: interleaved ? null : moduleCategory ?? null,
+        totalScenarios: actualTotal,
+        scenarioIds,
+      },
+    });
+
+    const startedRound = await loadNextScenario(session.id, session);
+
+    res.status(201).json({
+      success: true,
+      data: {
+        sessionId: session.id,
+        sessionCode: session.sessionCode,
+        difficulty: session.difficulty,
+        module: session.module,
+        totalScenarios: session.totalScenarios,
+        soloRole: session.soloRole,
+        startedRound,
       },
     });
   } catch (err: any) {

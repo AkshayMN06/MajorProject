@@ -5,6 +5,19 @@ export const createSessionSchema = z.object({
     difficulty: z.enum(['Easy', 'Medium', 'Hard', 'All']).optional(),
     totalScenarios: z.coerce.number().int().min(2).max(10).optional(),
     module: z.string().min(1).max(100).optional(),
+    interleaved: z.boolean().optional(),
+  }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+export const createSoloSessionSchema = z.object({
+  body: z.object({
+    difficulty: z.enum(['Easy', 'Medium', 'Hard', 'All']).optional(),
+    totalScenarios: z.coerce.number().int().min(2).max(10).optional(),
+    module: z.string().min(1).max(100).optional(),
+    soloRole: z.enum(['ATTACKER', 'DEFENDER']),
+    interleaved: z.boolean().optional(),
   }),
   query: z.object({}).optional(),
   params: z.object({}).optional(),

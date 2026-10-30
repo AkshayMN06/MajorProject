@@ -33,13 +33,24 @@ apiClient.interceptors.response.use(
 /**
  * Helper to unwrap the response data.
  * Backend returns { success: boolean, data?: T, error?: string }
+ *
+ * Any extra top-level fields on an error response (e.g. login's
+ * `lockedUntil`) are copied onto the thrown Error so callers can read them
+ * off the caught error, not just `.message`.
  */
 const unwrap = async <T>(promise: Promise<any>): Promise<T> => {
-  const response = await promise;
-  if (!response.data.success && response.data.error) {
-    throw new Error(response.data.error);
+  try {
+    const response = await promise;
+    if (!response.data.success && response.data.error) {
+      throw Object.assign(new Error(response.data.error), response.data);
+    }
+    return response.data.data as T;
+  } catch (err: any) {
+    if (err.response?.data?.error) {
+      throw Object.assign(new Error(err.response.data.error), err.response.data);
+    }
+    throw err;
   }
-  return response.data.data as T;
 };
 
 // --- Auth API ---
@@ -48,6 +59,9 @@ export const authApi = {
   login: (data: any) => unwrap<any>(apiClient.post('/auth/login', data)),
   getMe: () => unwrap<any>(apiClient.get('/auth/me')),
   changePassword: (data: any) => unwrap<any>(apiClient.put('/auth/password', data)),
+  forgotPassword: (email: string) => unwrap<{ message: string }>(apiClient.post('/auth/forgot-password', { email })),
+  resetPassword: (token: string, newPassword: string) =>
+    unwrap<{ message: string }>(apiClient.post('/auth/reset-password', { token, newPassword })),
 };
 
 // --- Users API ---
@@ -108,9 +122,39 @@ export const recommendationApi = {
 };
 
 // --- Modules API ---
+// Curriculum modules (Module -> Lesson), one module per Scenario.category —
+// separate from Practice Labs' role-neutral case-study MCQs above.
+export interface ModuleSummary {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  difficulty: string;
+  duration: number;
+  order: number;
+  lessonCount: number;
+  completedLessonCount: number;
+}
+
+export interface ModuleLesson {
+  id: string;
+  moduleId: string;
+  title: string;
+  content: string;
+  type: 'theory' | 'interactive' | 'quiz';
+  order: number;
+  completed: boolean;
+}
+
+export interface ModuleDetail extends Omit<ModuleSummary, 'lessonCount' | 'completedLessonCount'> {
+  lessons: ModuleLesson[];
+}
+
 export const moduleApi = {
-  getAll: () => unwrap<any>(apiClient.get('/modules')),
-  getById: (id: string) => unwrap<any>(apiClient.get(`/modules/${id}`)),
+  getAll: () => unwrap<ModuleSummary[]>(apiClient.get('/modules')),
+  getById: (id: string) => unwrap<ModuleDetail>(apiClient.get(`/modules/${id}`)),
+  completeLesson: (moduleId: string, lessonId: string) =>
+    unwrap<{ success: true }>(apiClient.post(`/modules/${moduleId}/lessons/${lessonId}/complete`)),
 };
 
 // --- Labs API ---
@@ -330,8 +374,23 @@ export interface AdminUser {
   quizAttemptCount: number;
 }
 
+export interface SecurityEvent {
+  id: string;
+  userId: string | null;
+  email: string | null;
+  type: string;
+  ip: string | null;
+  userAgent: string | null;
+  createdAt: string;
+  user: { id: string; name: string; email: string } | null;
+}
+
 export const adminApi = {
   getStats: () => unwrap<AdminStats>(apiClient.get('/admin/stats')),
+  getSecurityEvents: (params: { userId?: string; type?: string; page?: number; pageSize?: number } = {}) =>
+    unwrap<{ events: SecurityEvent[]; total: number; page: number; pageSize: number }>(
+      apiClient.get('/admin/security-events', { params })
+    ),
   getAnalytics: (filters: AdminAnalyticsFilters = {}) =>
     unwrap<{ overall: AdminOverallStats; rows: AdminImprovementRow[]; moduleSummary: AdminCategoryAggregate[]; difficultySummary: AdminCategoryAggregate[] }>(
       apiClient.get('/admin/analytics', { params: filters })

@@ -53,6 +53,13 @@ function ensureRoomState(sessionId: string): RoomState {
   return room;
 }
 
+// Solo mode picks the system-controlled side uniformly at random from the
+// scenario's own option pool — approximating an unpredictable opponent
+// rather than always feeding the human the easiest or the "correct" match.
+function pickSystemOption(options: any[]): any {
+  return options[Math.floor(Math.random() * options.length)];
+}
+
 export async function markReady(sessionId: string, userId: string) {
   const session = await prisma.session.findUnique({ where: { id: sessionId } });
   if (!session) throw new Error('Session not found');
@@ -61,7 +68,10 @@ export async function markReady(sessionId: string, userId: string) {
   const isDefender = session.defenderId === userId;
   if (!isAttacker && !isDefender) throw new Error('You are not a participant in this session');
 
-  const updateData = isAttacker ? { attackerReady: true } : { defenderReady: true };
+  // In SOLO mode attackerId === defenderId (the same human occupies both
+  // slots), so the one ready action satisfies both flags at once.
+  const updateData =
+    session.mode === 'SOLO' ? { attackerReady: true, defenderReady: true } : isAttacker ? { attackerReady: true } : { defenderReady: true };
   const updated = await prisma.session.update({ where: { id: sessionId }, data: updateData });
 
   let startedRound: Awaited<ReturnType<typeof loadNextScenario>> | null = null;
@@ -78,7 +88,15 @@ export async function markReady(sessionId: string, userId: string) {
 
 export async function loadNextScenario(
   sessionId: string,
-  session: { scenarioIds: unknown; currentScenarioIndex: number; totalScenarios: number; status: string }
+  session: {
+    scenarioIds: unknown;
+    currentScenarioIndex: number;
+    totalScenarios: number;
+    status: string;
+    attackerId?: string;
+    mode?: string;
+    soloRole?: string | null;
+  }
 ) {
   const scenarioIds: string[] = (session.scenarioIds as string[]) ?? [];
   const idx = session.currentScenarioIndex;
@@ -108,8 +126,31 @@ export async function loadNextScenario(
   // SESSION_READY/NEXT_ROUND -> SCENARIO_LOADED -> ATTACK_SELECTION: the
   // scenario is loaded and the attacker's turn opens in the same request,
   // so only the final state is persisted, but both hops are validated.
-  const nextStatus = transitionThrough(session.status, [SessionState.SCENARIO_LOADED, SessionState.ATTACK_SELECTION]);
+  let nextStatus = transitionThrough(session.status, [SessionState.SCENARIO_LOADED, SessionState.ATTACK_SELECTION]);
   await prisma.session.update({ where: { id: sessionId }, data: { status: nextStatus } });
+
+  let systemAttack: {
+    attackOptionId: string;
+    attackOptionName: string;
+    attackOptionDescription: string;
+    attackCategory: string;
+    attackDifficulty: string;
+  } | null = null;
+
+  // Solo-as-defender: there is no live attacker, so the system picks the
+  // attack immediately so the human can go straight to defense selection.
+  if (session.mode === 'SOLO' && session.soloRole === 'DEFENDER' && session.attackerId) {
+    const attackOption = pickSystemOption(shuffledScenario.attackOptions);
+    const attackResult = await performAttack(sessionId, { ...session, status: nextStatus }, attackOption.id);
+    nextStatus = attackResult.status as SessionState;
+    systemAttack = {
+      attackOptionId: attackResult.attackOptionId,
+      attackOptionName: attackResult.attackOptionName,
+      attackOptionDescription: attackResult.attackOptionDescription,
+      attackCategory: attackResult.attackCategory,
+      attackDifficulty: attackResult.attackDifficulty,
+    };
+  }
 
   return {
     sessionId,
@@ -117,17 +158,18 @@ export async function loadNextScenario(
     roundNumber: idx + 1,
     totalRounds: session.totalScenarios,
     status: nextStatus,
+    systemAttack,
   };
 }
 
-export async function submitAttack(
+// Core attack-submission logic, shared by the real (human) submitAttack
+// entry point and the solo-mode system auto-attack in loadNextScenario.
+// Ownership is checked by the public wrapper, not here.
+async function performAttack(
   sessionId: string,
-  userId: string,
+  session: { status: string },
   attackOptionId: string
 ) {
-  const session = await prisma.session.findUnique({ where: { id: sessionId } });
-  if (!session) throw new Error('Session not found');
-  if (session.attackerId !== userId) throw new Error('Only the attacker can submit an attack');
   if (session.status !== SessionState.ATTACK_SELECTION) throw new Error('Not in attack selection phase');
 
   const room = roomStates.get(sessionId);
@@ -156,14 +198,51 @@ export async function submitAttack(
   };
 }
 
-export async function submitDefense(
+export async function submitAttack(
   sessionId: string,
   userId: string,
-  defenseOptionId: string
+  attackOptionId: string
 ) {
   const session = await prisma.session.findUnique({ where: { id: sessionId } });
   if (!session) throw new Error('Session not found');
-  if (session.defenderId !== userId) throw new Error('Only the defender can submit a defense');
+  if (session.attackerId !== userId) throw new Error('Only the attacker can submit an attack');
+
+  const attackResult = await performAttack(sessionId, session, attackOptionId);
+
+  // Solo-as-attacker: there is no live defender, so the system immediately
+  // picks a defense and the round resolves in the same request.
+  if (session.mode === 'SOLO' && session.soloRole === 'ATTACKER' && session.defenderId) {
+    const room = roomStates.get(sessionId)!;
+    const defenseOption = pickSystemOption(room.currentScenario.defenseOptions);
+    const roundResult = await performDefense(
+      sessionId,
+      { ...session, status: attackResult.status },
+      defenseOption.id
+    );
+    return { ...attackResult, roundResult };
+  }
+
+  return attackResult;
+}
+
+// Core defense-submission + scoring logic, shared by the real (human)
+// submitDefense entry point and the solo-mode system auto-defense chained
+// from submitAttack. Ownership is checked by the public wrapper, not here.
+async function performDefense(
+  sessionId: string,
+  session: {
+    status: string;
+    attackerId: string;
+    defenderId: string | null;
+    attackerScore: number;
+    defenderScore: number;
+    currentScenarioIndex: number;
+    totalScenarios: number;
+    mode?: string;
+    soloRole?: string | null;
+  },
+  defenseOptionId: string
+) {
   if (session.status !== SessionState.DEFENSE_SELECTION) throw new Error('Not in defense selection phase');
 
   const room = roomStates.get(sessionId);
@@ -179,6 +258,7 @@ export async function submitDefense(
   const processingStatus = transition(session.status, SessionState.RULE_PROCESSING);
   await prisma.session.update({ where: { id: sessionId }, data: { status: processingStatus } });
 
+  const isSolo = session.mode === 'SOLO';
   const evaluationResult = await ruleEngine.evaluate({
     sessionId,
     scenarioId: room.currentScenario.id,
@@ -188,6 +268,8 @@ export async function submitDefense(
     defenderChoice: defenseOptionId,
     attackerTimeTaken,
     defenderTimeTaken,
+    attackerIsSystem: isSolo && session.soloRole === 'DEFENDER',
+    defenderIsSystem: isSolo && session.soloRole === 'ATTACKER',
   });
 
   const newAttackerTotal = session.attackerScore + evaluationResult.attackerScoreBreakdown.total;
@@ -231,6 +313,18 @@ export async function submitDefense(
   return result;
 }
 
+export async function submitDefense(
+  sessionId: string,
+  userId: string,
+  defenseOptionId: string
+) {
+  const session = await prisma.session.findUnique({ where: { id: sessionId } });
+  if (!session) throw new Error('Session not found');
+  if (session.defenderId !== userId) throw new Error('Only the defender can submit a defense');
+
+  return performDefense(sessionId, session, defenseOptionId);
+}
+
 export async function advanceRound(sessionId: string, userId: string) {
   const session = await prisma.session.findUnique({ where: { id: sessionId } });
   if (!session) throw new Error('Session not found');
@@ -252,7 +346,10 @@ export async function advanceRound(sessionId: string, userId: string) {
     // Recommendation + analytics-snapshot steps — once per completed
     // assessment, not per round.
     await RecommendationEngine.generateRecommendations(session.attackerId);
-    if (session.defenderId) await RecommendationEngine.generateRecommendations(session.defenderId);
+    // In SOLO mode defenderId === attackerId — skip the duplicate call.
+    if (session.defenderId && session.defenderId !== session.attackerId) {
+      await RecommendationEngine.generateRecommendations(session.defenderId);
+    }
     await AnalyticsEngine.recordAssessmentCompletion(sessionId);
 
     return { complete: true as const, sessionId };

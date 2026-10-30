@@ -35,7 +35,8 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
-  
+  lockedUntil: string | null;
+
   login: (email: string, password?: string) => Promise<void>;
   register: (data: RegisterData) => Promise<void>;
   logout: () => void;
@@ -52,16 +53,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isAuthenticated: !!localStorage.getItem('cyberlearn_token'),
   isLoading: false,
   error: null,
+  lockedUntil: null,
 
   login: async (email: string, password?: string) => {
-    set({ isLoading: true, error: null });
+    set({ isLoading: true, error: null, lockedUntil: null });
     try {
       const response = await authApi.login({ email, password });
       const { token, user } = response;
       localStorage.setItem('cyberlearn_token', token);
       set({ user, token, isAuthenticated: true, isLoading: false });
     } catch (err: any) {
-      set({ error: err.message || 'Login failed', isLoading: false });
+      set({ error: err.message || 'Login failed', isLoading: false, lockedUntil: err.lockedUntil ?? null });
       throw err;
     }
   },
@@ -102,7 +104,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  clearError: () => set({ error: null }),
+  clearError: () => set({ error: null, lockedUntil: null }),
 
   updateProfile: async (data: Partial<User>) => {
     set({ isLoading: true, error: null });

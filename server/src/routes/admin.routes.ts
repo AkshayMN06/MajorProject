@@ -4,7 +4,7 @@ import ExcelJS from 'exceljs';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { validate } from '../middleware/validate';
-import { adminAnalyticsQuerySchema, adminUsersQuerySchema, adminExportQuerySchema } from '../validation/adminSchemas';
+import { adminAnalyticsQuerySchema, adminUsersQuerySchema, adminExportQuerySchema, adminSecurityEventsQuerySchema } from '../validation/adminSchemas';
 import {
   fetchCompletedPairs,
   computeOverall,
@@ -297,6 +297,33 @@ router.get('/export', validate(adminExportQuerySchema), async (req: AuthRequest,
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="admin-report-${dateStamp}.xlsx"`);
     res.send(Buffer.from(buffer));
+  } catch (err: any) {
+    handleError(res, err);
+  }
+});
+
+// GET /api/admin/security-events?userId=&type=&page=&pageSize= — paginated
+// review of the login/lockout/password-change audit trail (securityEventLogger.ts).
+router.get('/security-events', validate(adminSecurityEventsQuerySchema), async (req: AuthRequest, res: Response) => {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
+    const where: { userId?: string; type?: string } = {};
+    if (typeof req.query.userId === 'string' && req.query.userId) where.userId = req.query.userId;
+    if (typeof req.query.type === 'string' && req.query.type) where.type = req.query.type;
+
+    const [events, total] = await Promise.all([
+      prisma.securityEvent.findMany({
+        where,
+        include: { user: { select: { id: true, name: true, email: true } } },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      prisma.securityEvent.count({ where }),
+    ]);
+
+    res.json({ success: true, data: { events, total, page, pageSize } });
   } catch (err: any) {
     handleError(res, err);
   }

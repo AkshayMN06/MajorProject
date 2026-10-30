@@ -57,10 +57,18 @@ export class AnalyticsEngine {
     const report = await buildAssessmentReport(sessionId);
     if (!report) return;
 
-    const participants: { userId: string; role: 'attacker' | 'defender'; finalScore: number; accuracy: number }[] = [
-      { userId: session.attackerId, role: 'attacker', finalScore: report.attackerFinalScore, accuracy: report.attackerAccuracy },
-    ];
-    if (session.defenderId) {
+    // In SOLO mode attackerId === defenderId (the same human occupies both
+    // slots) — only the role the human actually played should get a
+    // snapshot, not a phantom empty one for the system-controlled side.
+    const participants: { userId: string; role: 'attacker' | 'defender'; finalScore: number; accuracy: number }[] =
+      session.mode === 'SOLO'
+        ? [
+            session.soloRole === 'DEFENDER'
+              ? { userId: session.attackerId, role: 'defender' as const, finalScore: report.defenderFinalScore, accuracy: report.defenderAccuracy }
+              : { userId: session.attackerId, role: 'attacker' as const, finalScore: report.attackerFinalScore, accuracy: report.attackerAccuracy },
+          ]
+        : [{ userId: session.attackerId, role: 'attacker', finalScore: report.attackerFinalScore, accuracy: report.attackerAccuracy }];
+    if (session.mode !== 'SOLO' && session.defenderId) {
       participants.push({
         userId: session.defenderId,
         role: 'defender',

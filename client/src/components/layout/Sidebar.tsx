@@ -1,12 +1,13 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { Shield, LayoutDashboard, Target, FlaskConical, BarChart3, User, Settings, ShieldCheck } from 'lucide-react';
+import { Shield, LayoutDashboard, Target, FlaskConical, BarChart3, User, Settings, ShieldCheck, BookOpen, ShieldAlert } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuthStore } from '../../store/authStore';
 
 const NAV_ITEMS = [
   { name: 'Dashboard', path: '/', icon: LayoutDashboard },
   { name: 'Scenario Assessment', path: '/scenario', icon: Target },
+  { name: 'Modules', path: '/modules', icon: BookOpen },
   { name: 'Practice Labs', path: '/labs', icon: FlaskConical },
   { name: 'Analytics', path: '/analytics', icon: BarChart3 },
   { name: 'Profile', path: '/profile', icon: User },
@@ -19,6 +20,7 @@ const NAV_ITEMS = [
 // to those routes, so this isn't just a cosmetic hide.
 const ADMIN_NAV_ITEMS = [
   { name: 'Admin', path: '/admin', icon: ShieldCheck },
+  { name: 'Security', path: '/admin/security', icon: ShieldAlert },
   { name: 'Profile', path: '/profile', icon: User },
   { name: 'Settings', path: '/settings', icon: Settings },
 ];

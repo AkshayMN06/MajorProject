@@ -172,6 +172,19 @@ type Action =
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'SESSION_CREATED'; sessionId: string; sessionCode: string; difficulty: string; module: string | null; totalRounds: number; role: 'attacker' }
   | { type: 'SESSION_JOINED'; sessionId: string; sessionCode: string; difficulty: string; module: string | null; totalRounds: number; attackerName: string; defenderName: string; role: 'defender' }
+  | {
+      type: 'SOLO_SESSION_CREATED';
+      sessionId: string;
+      sessionCode: string;
+      difficulty: string;
+      module: string | null;
+      totalRounds: number;
+      role: 'attacker' | 'defender';
+      scenario: Scenario;
+      roundNumber: number;
+      status: string;
+      incomingAttack: SessionState['incomingAttack'];
+    }
   | { type: 'SESSION_STATE'; data: Partial<SessionState> }
   | { type: 'SESSION_REHYDRATED'; phase: 'waiting_for_participant' | 'waiting_room'; sessionId: string; sessionCode: string; difficulty: string; module: string | null; totalRounds: number; attackerName: string | null; defenderName: string | null; role: 'attacker' | 'defender' }
   | { type: 'POST_TEST_REHYDRATED'; sessionId: string; role: 'attacker' | 'defender'; report: AssessmentReport }
@@ -179,7 +192,7 @@ type Action =
   | { type: 'PARTNER_CONNECTED'; role: string; userName: string }
   | { type: 'READY_UPDATE'; attackerReady: boolean; defenderReady: boolean }
   | { type: 'MY_READY' }
-  | { type: 'SCENARIO_LOADED'; scenario: Scenario; roundNumber: number; totalRounds: number }
+  | { type: 'SCENARIO_LOADED'; scenario: Scenario; roundNumber: number; totalRounds: number; incomingAttack?: SessionState['incomingAttack'] }
   | { type: 'ATTACK_SUBMITTED'; attackOptionId: string; attackOptionName: string; attackOptionDescription: string; attackCategory: string; attackDifficulty: string }
   | { type: 'DEFENSE_SUBMITTED' }
   | { type: 'ROUND_RESULT'; result: RoundResult }
@@ -245,6 +258,23 @@ function reducer(state: SessionState, action: Action): SessionState {
         isLoading: false,
         error: null,
       };
+    case 'SOLO_SESSION_CREATED':
+      return {
+        ...state,
+        phase: action.status === 'DEFENSE_SELECTION' ? 'defense_selection' : 'attack_selection',
+        role: action.role,
+        sessionId: action.sessionId,
+        sessionCode: action.sessionCode,
+        difficulty: action.difficulty,
+        module: action.module,
+        totalRounds: action.totalRounds,
+        currentRound: action.roundNumber,
+        scenario: action.scenario,
+        incomingAttack: action.incomingAttack,
+        roundResult: null,
+        isLoading: false,
+        error: null,
+      };
     case 'SESSION_STATE':
       return { ...state, ...action.data };
     case 'SESSION_REHYDRATED':
@@ -298,7 +328,7 @@ function reducer(state: SessionState, action: Action): SessionState {
         scenario: action.scenario,
         currentRound: action.roundNumber,
         totalRounds: action.totalRounds,
-        incomingAttack: null,
+        incomingAttack: action.incomingAttack ?? null,
         roundResult: null,
       };
     case 'ATTACK_SUBMITTED':
@@ -404,6 +434,15 @@ export function useScenarioSession() {
         scenario: data.scenario,
         roundNumber: data.roundNumber,
         totalRounds: data.totalRounds,
+        incomingAttack: data.systemAttack
+          ? {
+              id: data.systemAttack.attackOptionId,
+              name: data.systemAttack.attackOptionName,
+              description: data.systemAttack.attackOptionDescription,
+              category: data.systemAttack.attackCategory,
+              difficulty: data.systemAttack.attackDifficulty,
+            }
+          : undefined,
       });
     });
 
@@ -456,6 +495,7 @@ export function useScenarioSession() {
     difficulty: string;
     totalScenarios: number;
     module?: string;
+    interleaved?: boolean;
   }) => {
     dispatch({ type: 'SET_LOADING', loading: true });
     try {
@@ -471,6 +511,50 @@ export function useScenarioSession() {
         module: module ?? null,
         totalRounds: totalScenarios,
         role: 'attacker',
+      });
+
+      connectSocket();
+      setTimeout(() => {
+        socketRef.current?.emit('joinSession', { sessionId });
+      }, 300);
+    } catch (err: any) {
+      dispatch({ type: 'SET_ERROR', error: err.response?.data?.error ?? err.message });
+    }
+  }, [connectSocket]);
+
+  const createSoloSession = useCallback(async (opts: {
+    difficulty: string;
+    totalScenarios: number;
+    module?: string;
+    soloRole: 'ATTACKER' | 'DEFENDER';
+    interleaved?: boolean;
+  }) => {
+    dispatch({ type: 'SET_LOADING', loading: true });
+    try {
+      const res = await apiClient.post('/sessions/solo', opts);
+      if (!res.data.success) throw new Error(res.data.error);
+      const { sessionId, sessionCode, difficulty, module, totalScenarios, soloRole, startedRound } = res.data.data;
+
+      dispatch({
+        type: 'SOLO_SESSION_CREATED',
+        sessionId,
+        sessionCode,
+        difficulty,
+        module: module ?? null,
+        totalRounds: totalScenarios,
+        role: soloRole === 'DEFENDER' ? 'defender' : 'attacker',
+        scenario: startedRound.scenario,
+        roundNumber: startedRound.roundNumber,
+        status: startedRound.status,
+        incomingAttack: startedRound.systemAttack
+          ? {
+              id: startedRound.systemAttack.attackOptionId,
+              name: startedRound.systemAttack.attackOptionName,
+              description: startedRound.systemAttack.attackOptionDescription,
+              category: startedRound.systemAttack.attackCategory,
+              difficulty: startedRound.systemAttack.attackDifficulty,
+            }
+          : null,
       });
 
       connectSocket();
@@ -617,6 +701,7 @@ export function useScenarioSession() {
   return {
     state,
     createSession,
+    createSoloSession,
     joinSession,
     rehydrateActiveSession,
     markReady,

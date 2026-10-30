@@ -59,7 +59,10 @@ export const setupSocket = (httpServer: HttpServer) => {
         }
 
         socket.join(sessionId);
-        const role = isAttacker ? 'attacker' : 'defender';
+        // In SOLO mode attackerId === defenderId, so identity alone can't
+        // tell the roles apart — defer to the session's own soloRole.
+        const role =
+          session.mode === 'SOLO' ? (session.soloRole === 'DEFENDER' ? 'defender' : 'attacker') : isAttacker ? 'attacker' : 'defender';
 
         socket.to(sessionId).emit('partnerConnected', {
           role,
@@ -137,8 +140,20 @@ export const setupSocket = (httpServer: HttpServer) => {
       attackOptionId: string;
     }) => {
       try {
-        const result = await submitAttack(data.sessionId, user.id, data.attackOptionId);
-        io.to(data.sessionId).emit('attackSubmitted', result);
+        const result: any = await submitAttack(data.sessionId, user.id, data.attackOptionId);
+        // Solo-as-attacker: submitAttack already chained a system defense
+        // and resolved the round — go straight to the round result instead
+        // of the normal "waiting for a live defender" event.
+        if (result.roundResult) {
+          io.to(data.sessionId).emit('ruleProcessed', {
+            sessionId: data.sessionId,
+            outcome: result.roundResult.outcome,
+            explanation: result.roundResult.explanation,
+          });
+          io.to(data.sessionId).emit('roundCompleted', result.roundResult);
+        } else {
+          io.to(data.sessionId).emit('attackSubmitted', result);
+        }
       } catch (err: any) {
         socket.emit('sessionError', { message: err.message });
       }
