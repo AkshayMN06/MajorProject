@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Target, Send } from 'lucide-react';
-import type { Scenario } from '../../hooks/useScenarioSession';
-import { StrategyCard, ScenarioHeader, AssessmentGuide, WaitingOverlay } from './ScenarioShared';
+import type { Scenario, AssessmentMode } from '../../hooks/useScenarioSession';
+import { StrategyCard, ScenarioHeader, AssessmentGuide, WaitingOverlay, ModeBadge } from './ScenarioShared';
 
 interface AttackerViewProps {
   scenario: Scenario;
@@ -11,6 +11,7 @@ interface AttackerViewProps {
   attackerScore: number;
   defenderScore: number;
   sessionCode: string | null;
+  mode?: AssessmentMode | null;
   isWaiting: boolean; // true after submitting
   onSubmit: (optionId: string) => void;
 }
@@ -22,6 +23,7 @@ const AttackerView: React.FC<AttackerViewProps> = ({
   attackerScore,
   defenderScore,
   sessionCode,
+  mode,
   isWaiting,
   onSubmit,
 }) => {
@@ -39,7 +41,7 @@ const AttackerView: React.FC<AttackerViewProps> = ({
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6 space-y-5">
       {/* Role badge */}
-      <div className="flex items-center gap-3 border-b border-[#1e293b] pb-4">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-[#1e293b] pb-4">
         <div className="w-8 h-8 rounded-lg bg-red-500/10 border border-red-500/30 flex items-center justify-center">
           <Target size={16} className="text-red-400" />
         </div>
@@ -47,6 +49,7 @@ const AttackerView: React.FC<AttackerViewProps> = ({
         <span className="px-2 py-0.5 text-xs font-semibold rounded border border-red-500/30 text-red-400 bg-red-500/10 tracking-wider">
           ATTACKER
         </span>
+        <ModeBadge mode={mode} />
       </div>
 
       {/* Scenario header */}

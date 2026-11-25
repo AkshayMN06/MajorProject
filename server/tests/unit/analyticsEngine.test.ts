@@ -10,11 +10,15 @@ const mocks = vi.hoisted(() => ({
   mockSnapshotCreate: vi.fn(),
   mockAttemptFindMany: vi.fn(),
   mockSessionFindUnique: vi.fn(),
+  mockExecuteRaw: vi.fn(),
+  mockFindUniqueOrThrow: vi.fn(),
 }));
 
 vi.mock('@prisma/client', () => {
   const mockPrisma = {
+    $executeRaw: mocks.mockExecuteRaw,
     analytics: {
+      findUniqueOrThrow: mocks.mockFindUniqueOrThrow,
       findFirst: mocks.mockFindFirst,
       create: mocks.mockCreate,
       update: mocks.mockUpdate,
@@ -47,45 +51,34 @@ describe('AnalyticsEngine', () => {
   });
 
   describe('updateAnalytics', () => {
-    it('when no existing record -> creates new analytics entry with correct values', async () => {
-      mocks.mockFindFirst.mockResolvedValue(null);
-      mocks.mockCreate.mockResolvedValue({ id: 'a1', accuracy: 100 });
+    // The arithmetic and contention behaviour run against real PostgreSQL in
+    // tests/integration/analyticsConcurrency.test.ts; here we pin the shape
+    // of the single atomic statement and its bound first-attempt values.
+    it('issues one atomic upsert keyed on (userId, category) with first-attempt values', async () => {
+      mocks.mockExecuteRaw.mockResolvedValue(1);
+      mocks.mockFindUniqueOrThrow.mockResolvedValue({ id: 'a1' });
 
       await AnalyticsEngine.updateAnalytics('u1', 'cat1', true, 20);
 
-      expect(mocks.mockCreate).toHaveBeenCalledWith(expect.objectContaining({
-        data: expect.objectContaining({
-          userId: 'u1',
-          category: 'cat1',
-          totalAttempts: 1,
-          correctAttempts: 1,
-          accuracy: 100,
-          averageTime: 20
-        })
-      }));
+      expect(mocks.mockExecuteRaw).toHaveBeenCalledTimes(1);
+      const [strings, ...values] = mocks.mockExecuteRaw.mock.calls[0];
+      const sql = (strings as string[]).join('?');
+      expect(sql).toMatch(/INSERT INTO "analytics"/);
+      expect(sql).toMatch(/ON CONFLICT \("userId", "category"\) DO UPDATE/);
+      // values: id, userId, category, correct, averageTime, accuracy, lastUpdated
+      expect(values.slice(1, 6)).toEqual(['u1', 'cat1', 1, 20, 100]);
+      expect(values[6]).toBeInstanceOf(Date);
+      expect(mocks.mockFindUniqueOrThrow).toHaveBeenCalledWith({ where: { userId_category: { userId: 'u1', category: 'cat1' } } });
     });
 
-    it('when existing record -> updates with correctly computed averages and accuracy', async () => {
-      mocks.mockFindFirst.mockResolvedValue({
-        id: 'a1',
-        totalAttempts: 1,
-        correctAttempts: 1,
-        accuracy: 100,
-        averageTime: 20
-      });
-      mocks.mockUpdate.mockResolvedValue({});
+    it('binds an incorrect attempt as 0 correct / 0% for the insert case', async () => {
+      mocks.mockExecuteRaw.mockResolvedValue(1);
+      mocks.mockFindUniqueOrThrow.mockResolvedValue({ id: 'a1' });
 
       await AnalyticsEngine.updateAnalytics('u1', 'cat1', false, 40);
 
-      expect(mocks.mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
-        where: { id: 'a1' },
-        data: expect.objectContaining({
-          totalAttempts: 2,
-          correctAttempts: 1,
-          accuracy: 50,
-          averageTime: 30
-        })
-      }));
+      const [, ...values] = mocks.mockExecuteRaw.mock.calls[0];
+      expect(values.slice(1, 6)).toEqual(['u1', 'cat1', 0, 40, 0]);
     });
   });
 
@@ -153,6 +146,17 @@ describe('AnalyticsEngine', () => {
 
       const summary = await AnalyticsEngine.getAnalyticsSummary('u1');
       expect(summary.responseTimeStats).toEqual({ fastest: 10, median: 20, slowest: 30 });
+    });
+
+    it('averages the two middle response times for even-sized samples', async () => {
+      mocks.mockFindMany.mockResolvedValue([]);
+      mocks.mockCount.mockResolvedValue(0);
+      mocks.mockAttemptFindMany.mockResolvedValue([
+        { timeTaken: 60 }, { timeTaken: 22 }, { timeTaken: 12 }, { timeTaken: 19 },
+      ]);
+
+      const summary = await AnalyticsEngine.getAnalyticsSummary('u1');
+      expect(summary.responseTimeStats).toEqual({ fastest: 12, median: 20.5, slowest: 60 });
     });
   });
 

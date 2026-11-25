@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { sampleQuestions } from './practiceEngine';
 
 const prisma = new PrismaClient();
@@ -136,4 +136,55 @@ export async function getAttemptQuestions(attempt: { questionIds: unknown }) {
   const questions = await prisma.question.findMany({ where: { id: { in: ids } } });
   const byId = new Map(questions.map((q) => [q.id, q]));
   return ids.map((id) => byId.get(id)).filter((q): q is NonNullable<typeof q> => Boolean(q));
+}
+
+export async function submitAttempt(
+  attemptId: string,
+  userId: string,
+  responses: { questionId: string; selectedOption: 'A' | 'B' | 'C' | 'D' }[],
+) {
+  const attempt = await prisma.quizAttempt.findUnique({ where: { id: attemptId } });
+  if (!attempt) throw httpError(404, 'Attempt not found');
+  if (attempt.userId !== userId) throw httpError(403, 'Forbidden');
+  if (attempt.status === 'completed') throw httpError(400, 'This attempt was already submitted');
+
+  const assignedIds = new Set((attempt.questionIds as string[] | null) ?? []);
+  if (assignedIds.size === 0) throw httpError(400, 'This attempt has no assigned questions');
+
+  // Match Practice Labs: the final answer for a question wins, and stale
+  // answers outside the assigned set do not affect a valid submission.
+  const answers = new Map<string, string>();
+  for (const { questionId, selectedOption } of responses) {
+    if (assignedIds.has(questionId)) answers.set(questionId, selectedOption);
+  }
+  const questions = answers.size === 0
+    ? []
+    : await prisma.question.findMany({
+        where: { id: { in: [...answers.keys()] } },
+        select: { id: true, correctOption: true },
+      });
+
+  let score = 0;
+  const responseRows: Prisma.QuizResponseCreateManyInput[] = [];
+  for (const question of questions) {
+    const selectedOption = answers.get(question.id);
+    if (selectedOption === undefined) continue;
+    const isCorrect = question.correctOption === selectedOption;
+    if (isCorrect) score++;
+    responseRows.push({ attemptId, questionId: question.id, selectedOption, isCorrect });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const result = await tx.quizAttempt.updateMany({
+      where: { id: attemptId, userId, status: 'in_progress' },
+      data: { status: 'completed', score, completedAt: new Date() },
+    });
+    if (result.count === 0) throw httpError(400, 'This attempt was already submitted');
+
+    // An older failed submission may have inserted rows before completion.
+    await tx.quizResponse.deleteMany({ where: { attemptId } });
+    if (responseRows.length > 0) await tx.quizResponse.createMany({ data: responseRows });
+  });
+
+  return { attemptId, score, totalQuestions: attempt.totalQuestions };
 }

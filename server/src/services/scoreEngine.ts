@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -23,6 +23,8 @@ export interface CalculateScoreParams {
 type Role = 'attacker' | 'defender';
 
 export class ScoreEngine {
+  constructor(private readonly db: Pick<Prisma.TransactionClient, 'attempt'> = prisma) {}
+
   /**
    * Score = CorrectChoice + TimeEfficiency + Consistency - RepeatedMistakes
    */
@@ -66,7 +68,7 @@ export class ScoreEngine {
    */
   public async getConsistencyBonus(userId: string, category: string, role: Role = 'defender'): Promise<number> {
     const successOutcome = role === 'defender' ? 'defended' : 'breached';
-    const lastAttempts = await prisma.attempt.findMany({
+    const lastAttempts = await this.db.attempt.findMany({
       where: { userId, role, scenario: { category } },
       orderBy: { createdAt: 'desc' },
       take: 3,
@@ -88,7 +90,7 @@ export class ScoreEngine {
    * same category, failed for this role.
    */
   public async getRepeatedMistakePenalty(userId: string, category: string, choice: string, role: Role = 'defender'): Promise<number> {
-    const wrongAttempts = await prisma.attempt.count({
+    const wrongAttempts = await this.db.attempt.count({
       where: {
         userId,
         role,

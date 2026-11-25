@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { Outcome } from '../../../shared/types';
 
 const prisma = new PrismaClient();
@@ -17,8 +17,8 @@ export interface EventData {
 }
 
 export class EventLogger {
-  static async logEvent(data: EventData) {
-    return prisma.event.create({
+  static async logEvent(data: EventData, db: Pick<Prisma.TransactionClient, 'event'> = prisma) {
+    return db.event.create({
       data: {
         turnId: data.turnId,
         sessionId: data.sessionId,

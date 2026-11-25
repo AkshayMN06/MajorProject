@@ -1,40 +1,13 @@
 import { create } from 'zustand';
 import { analyticsApi, recommendationApi } from '../services/api';
+import type { AnalyticsSummary, CategoryAccuracy, PerformanceTrendPoint, Recommendation } from '../services/api';
 
-export interface AnalyticsSummary {
-  totalSessions: number;
-  winRate: number;
-  averageScore: number;
-  attackerWins: number;
-  defenderWins: number;
-  [key: string]: any;
-}
-
-export interface CategoryAccuracy {
-  category: string;
-  accuracy: number;
-  attempts: number;
-  [key: string]: any;
-}
-
-export interface PerformanceTrend {
-  date: string;
-  score: number;
-  [key: string]: any;
-}
-
-export interface Recommendation {
-  id: string;
-  title: string;
-  description: string;
-  priority: 'low' | 'medium' | 'high';
-  [key: string]: any;
-}
+export type { AnalyticsSummary, CategoryAccuracy, PerformanceTrendPoint as PerformanceTrend, Recommendation } from '../services/api';
 
 interface AnalyticsState {
   summary: AnalyticsSummary | null;
   categoryAccuracy: CategoryAccuracy[];
-  performanceTrends: PerformanceTrend[];
+  performanceTrends: PerformanceTrendPoint[];
   recommendations: Recommendation[];
   isLoading: boolean;
   error: string | null;

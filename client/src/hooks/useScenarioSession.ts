@@ -1,11 +1,12 @@
 import { useEffect, useRef, useCallback, useReducer } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { apiClient } from '../services/api';
+import { apiClient, backendOrigin } from '../services/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type SessionPhase =
   | 'landing'
+  | 'resuming'                  // hard refresh mid-round: socket replay pending
   | 'waiting_for_participant'   // attacker waiting for defender to join
   | 'waiting_room'              // both joined, not ready
   | 'attack_selection'
@@ -116,6 +117,7 @@ export interface LearningOutcomes {
 export interface AssessmentReport {
   sessionId: string;
   sessionCode: string;
+  mode?: string; // persisted Session.mode: 'PAIRED' | 'SOLO'
   attackerName: string;
   defenderName: string;
   totalRounds: number;
@@ -141,8 +143,18 @@ export interface AssessmentReport {
   events: any[];
 }
 
+// User-facing assessment mode. Persisted/API values stay 'PAIRED' | 'SOLO'.
+export type AssessmentMode = 'collaborative' | 'individual';
+
+export function assessmentModeOf(apiMode: string | null | undefined): AssessmentMode | null {
+  if (apiMode === 'SOLO') return 'individual';
+  if (apiMode === 'PAIRED') return 'collaborative';
+  return null;
+}
+
 export interface SessionState {
   phase: SessionPhase;
+  mode: AssessmentMode | null;
   role: 'attacker' | 'defender' | null;
   sessionId: string | null;
   sessionCode: string | null;
@@ -163,7 +175,13 @@ export interface SessionState {
   report: AssessmentReport | null;
   isLoading: boolean;
   error: string | null;
+  // Set while phase === 'resuming' when the replay failed (rejected,
+  // unreachable, or timed out); the page shows retry/leave instead of a spinner.
+  resumeError: string | null;
 }
+
+// How long a resuming client waits for the socket replay before offering retry.
+export const RESUME_TIMEOUT_MS = 10_000;
 
 // ─── Reducer ──────────────────────────────────────────────────────────────────
 
@@ -186,7 +204,7 @@ type Action =
       incomingAttack: SessionState['incomingAttack'];
     }
   | { type: 'SESSION_STATE'; data: Partial<SessionState> }
-  | { type: 'SESSION_REHYDRATED'; phase: 'waiting_for_participant' | 'waiting_room'; sessionId: string; sessionCode: string; difficulty: string; module: string | null; totalRounds: number; attackerName: string | null; defenderName: string | null; role: 'attacker' | 'defender' }
+  | { type: 'SESSION_REHYDRATED'; phase: 'waiting_for_participant' | 'waiting_room' | 'resuming'; sessionId: string; sessionCode: string; difficulty: string; module: string | null; totalRounds: number; currentRound: number; attackerScore: number; defenderScore: number; attackerName: string | null; defenderName: string | null; role: 'attacker' | 'defender'; mode: AssessmentMode | null }
   | { type: 'POST_TEST_REHYDRATED'; sessionId: string; role: 'attacker' | 'defender'; report: AssessmentReport }
   | { type: 'PARTNER_JOINED'; defenderName: string }
   | { type: 'PARTNER_CONNECTED'; role: string; userName: string }
@@ -197,10 +215,13 @@ type Action =
   | { type: 'DEFENSE_SUBMITTED' }
   | { type: 'ROUND_RESULT'; result: RoundResult }
   | { type: 'ASSESSMENT_COMPLETE'; report: AssessmentReport }
+  | { type: 'RESUME_FAILED'; error: string }
+  | { type: 'RESUME_RETRY' }
   | { type: 'RESET' };
 
 const initialState: SessionState = {
   phase: 'landing',
+  mode: null,
   role: null,
   sessionId: null,
   sessionCode: null,
@@ -221,9 +242,10 @@ const initialState: SessionState = {
   report: null,
   isLoading: false,
   error: null,
+  resumeError: null,
 };
 
-function reducer(state: SessionState, action: Action): SessionState {
+export function reducer(state: SessionState, action: Action): SessionState {
   switch (action.type) {
     case 'SET_LOADING':
       return { ...state, isLoading: action.loading, error: null };
@@ -232,6 +254,7 @@ function reducer(state: SessionState, action: Action): SessionState {
     case 'SESSION_CREATED':
       return {
         ...state,
+        mode: 'collaborative',
         phase: 'waiting_for_participant',
         role: action.role,
         sessionId: action.sessionId,
@@ -245,6 +268,7 @@ function reducer(state: SessionState, action: Action): SessionState {
     case 'SESSION_JOINED':
       return {
         ...state,
+        mode: 'collaborative',
         phase: 'waiting_room',
         role: action.role,
         sessionId: action.sessionId,
@@ -261,6 +285,7 @@ function reducer(state: SessionState, action: Action): SessionState {
     case 'SOLO_SESSION_CREATED':
       return {
         ...state,
+        mode: 'individual',
         phase: action.status === 'DEFENSE_SELECTION' ? 'defense_selection' : 'attack_selection',
         role: action.role,
         sessionId: action.sessionId,
@@ -280,6 +305,7 @@ function reducer(state: SessionState, action: Action): SessionState {
     case 'SESSION_REHYDRATED':
       return {
         ...state,
+        mode: action.mode,
         phase: action.phase,
         role: action.role,
         sessionId: action.sessionId,
@@ -287,15 +313,20 @@ function reducer(state: SessionState, action: Action): SessionState {
         difficulty: action.difficulty,
         module: action.module,
         totalRounds: action.totalRounds,
+        currentRound: action.currentRound,
+        attackerScore: action.attackerScore,
+        defenderScore: action.defenderScore,
         attackerName: action.attackerName,
         defenderName: action.defenderName,
-        partnerConnected: action.phase === 'waiting_room',
+        partnerConnected: action.phase !== 'waiting_for_participant',
         isLoading: false,
         error: null,
+        resumeError: null,
       };
     case 'POST_TEST_REHYDRATED':
       return {
         ...state,
+        mode: assessmentModeOf(action.report.mode),
         phase: 'assessment_complete',
         sessionId: action.sessionId,
         role: action.role,
@@ -330,6 +361,7 @@ function reducer(state: SessionState, action: Action): SessionState {
         totalRounds: action.totalRounds,
         incomingAttack: action.incomingAttack ?? null,
         roundResult: null,
+        resumeError: null,
       };
     case 'ATTACK_SUBMITTED':
       return state.role === 'attacker'
@@ -358,7 +390,13 @@ function reducer(state: SessionState, action: Action): SessionState {
         defenderScore: action.result.defenderTotalScore,
       };
     case 'ASSESSMENT_COMPLETE':
-      return { ...state, phase: 'assessment_complete', report: action.report };
+      return { ...state, phase: 'assessment_complete', report: action.report, resumeError: null, mode: assessmentModeOf(action.report?.mode) ?? state.mode };
+    case 'RESUME_FAILED':
+      // Only meaningful while resuming; a late failure after a successful
+      // replay must not knock the user out of a live round.
+      return state.phase === 'resuming' ? { ...state, resumeError: action.error, isLoading: false } : state;
+    case 'RESUME_RETRY':
+      return state.phase === 'resuming' ? { ...state, resumeError: null } : state;
     case 'RESET':
       return { ...initialState };
     default:
@@ -366,10 +404,20 @@ function reducer(state: SessionState, action: Action): SessionState {
   }
 }
 
-// Helper to read attackerReady/defenderReady without TS complaint
-function getReadyFlags(state: SessionState): { attackerReady: boolean; defenderReady: boolean } {
-  const s = state as any;
-  return { attackerReady: !!s.attackerReady, defenderReady: !!s.defenderReady };
+// ─── Socket join binding ──────────────────────────────────────────────────────
+
+// Joins the session room on every (re)connect of this socket. The server only
+// adds a socket to the room and replays round state in response to
+// joinSession, and a fresh connection is a fresh server-side socket — so a
+// join sent just before a drop is lost unless it is re-sent on reconnect.
+export function bindSessionJoin(
+  socket: { on(event: 'connect', fn: () => void): unknown; emit(event: string, payload: unknown): unknown },
+  getSessionId: () => string | null
+) {
+  socket.on('connect', () => {
+    const sessionId = getSessionId();
+    if (sessionId) socket.emit('joinSession', { sessionId });
+  });
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
@@ -379,16 +427,28 @@ export function useScenarioSession() {
   const socketRef = useRef<Socket | null>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
+  // The session the socket should be in; read on every (re)connect. Cleared
+  // by reset/unmount so a dropped socket can never rejoin after leaving.
+  const joinTargetRef = useRef<string | null>(null);
+  // Incremented by every resume attempt, reset and unmount: async resume work
+  // that finishes after a newer generation started is discarded.
+  const resumeGenRef = useRef(0);
 
-  // Connect socket once, with auth
+  // Connect socket once, with auth. A socket that exists but is still
+  // connecting/reconnecting is reused (socket.io retries on its own and
+  // buffers emits) rather than replaced, which would duplicate listeners.
   const connectSocket = useCallback(() => {
-    if (socketRef.current?.connected) return;
+    if (socketRef.current) return;
 
     const token = localStorage.getItem('cyberlearn_token');
-    const socket = io('/', {
+    // A deployed backend (Vercel Functions) supports WebSocket only — no
+    // HTTP long-polling fallback; locally the dev proxy handles both.
+    const socket = io(backendOrigin || '/', {
       auth: { token },
-      transports: ['websocket', 'polling'],
+      transports: backendOrigin ? ['websocket'] : ['websocket', 'polling'],
     });
+
+    bindSessionJoin(socket, () => joinTargetRef.current);
 
     socket.on('sessionState', (data: any) => {
       const s = stateRef.current;
@@ -411,6 +471,7 @@ export function useScenarioSession() {
           myReady: s.role === 'attacker' ? data.attackerReady : data.defenderReady,
           partnerReady: s.role === 'attacker' ? data.defenderReady : data.attackerReady,
           partnerConnected: !!data.defenderName,
+          mode: assessmentModeOf(data.mode) ?? s.mode,
         },
       });
     });
@@ -475,19 +536,41 @@ export function useScenarioSession() {
     });
 
     socket.on('sessionError', (data: any) => {
-      dispatch({ type: 'SET_ERROR', error: data.message ?? 'An error occurred' });
+      const message = data?.message ?? 'An error occurred';
+      // A rejected replay while resuming gets the retry/leave screen; a
+      // toast alone would leave the page on the spinner.
+      if (stateRef.current.phase === 'resuming') dispatch({ type: 'RESUME_FAILED', error: message });
+      else dispatch({ type: 'SET_ERROR', error: message });
+    });
+
+    socket.on('connect_error', (err: Error) => {
+      if (stateRef.current.phase === 'resuming') {
+        dispatch({ type: 'RESUME_FAILED', error: `Could not connect to the game server (${err.message}).` });
+      }
     });
 
     socketRef.current = socket;
   }, []);
 
-  // Cleanup socket on unmount
-  useEffect(() => {
-    return () => {
-      socketRef.current?.disconnect();
-      socketRef.current = null;
-    };
+  // Targets a session room. A socket that's already connected joins now; a
+  // new or reconnecting one joins from its 'connect' handler — exactly once
+  // per connection either way, with no timers to outlive the caller.
+  const joinRoom = useCallback((sessionId: string) => {
+    joinTargetRef.current = sessionId;
+    connectSocket();
+    if (socketRef.current?.connected) socketRef.current.emit('joinSession', { sessionId });
+  }, [connectSocket]);
+
+  // Drop the socket and invalidate any in-flight resume work.
+  const teardown = useCallback(() => {
+    resumeGenRef.current += 1;
+    joinTargetRef.current = null;
+    socketRef.current?.disconnect();
+    socketRef.current = null;
   }, []);
+
+  // Cleanup socket on unmount
+  useEffect(() => teardown, [teardown]);
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
@@ -513,14 +596,11 @@ export function useScenarioSession() {
         role: 'attacker',
       });
 
-      connectSocket();
-      setTimeout(() => {
-        socketRef.current?.emit('joinSession', { sessionId });
-      }, 300);
+      joinRoom(sessionId);
     } catch (err: any) {
       dispatch({ type: 'SET_ERROR', error: err.response?.data?.error ?? err.message });
     }
-  }, [connectSocket]);
+  }, [joinRoom]);
 
   const createSoloSession = useCallback(async (opts: {
     difficulty: string;
@@ -557,14 +637,11 @@ export function useScenarioSession() {
           : null,
       });
 
-      connectSocket();
-      setTimeout(() => {
-        socketRef.current?.emit('joinSession', { sessionId });
-      }, 300);
+      joinRoom(sessionId);
     } catch (err: any) {
       dispatch({ type: 'SET_ERROR', error: err.response?.data?.error ?? err.message });
     }
-  }, [connectSocket]);
+  }, [joinRoom]);
 
   const joinSession = useCallback(async (sessionCode: string) => {
     dispatch({ type: 'SET_LOADING', loading: true });
@@ -585,47 +662,55 @@ export function useScenarioSession() {
         role: 'defender',
       });
 
-      connectSocket();
-      setTimeout(() => {
-        socketRef.current?.emit('joinSession', { sessionId });
-      }, 300);
+      joinRoom(sessionId);
     } catch (err: any) {
       dispatch({ type: 'SET_ERROR', error: err.response?.data?.error ?? err.message });
     }
-  }, [connectSocket]);
+  }, [joinRoom]);
 
-  // Rehydrates a hard-refreshed client for the Pre-Test/Post-Test windows
-  // only (see GET /sessions/resumable's own scope note) — full mid-round
-  // resume remains a separate, pre-existing gap this does not address.
-  // Returns 'active' | 'post_test' | null so the caller can react.
-  const rehydrateActiveSession = useCallback(async (): Promise<'active' | 'post_test' | null> => {
+  // Rehydrates a hard-refreshed client (see GET /sessions/resumable). Pre-play
+  // sessions land straight in the waiting room; mid-round sessions show a
+  // 'resuming' state until the socket's joinSession replays the persisted
+  // scenario / attack / round result, which then sets the real phase.
+  // Returns 'active' | 'post_test' | null (nothing to resume) | 'error'
+  // (the check itself failed) | 'stale' (superseded by a newer attempt,
+  // reset or unmount — nothing was dispatched or connected).
+  const rehydrateActiveSession = useCallback(async (): Promise<'active' | 'post_test' | 'error' | 'stale' | null> => {
+    const generation = ++resumeGenRef.current;
+    const isStale = () => generation !== resumeGenRef.current;
     try {
       const res = await apiClient.get('/sessions/resumable');
+      if (isStale()) return 'stale';
       if (!res.data.success) return null;
       const { activeSession, pendingPostTestSession } = res.data.data;
 
       if (activeSession) {
         dispatch({
           type: 'SESSION_REHYDRATED',
-          phase: activeSession.status === 'SESSION_READY' ? 'waiting_room' : 'waiting_for_participant',
+          phase:
+            activeSession.status === 'SESSION_READY' ? 'waiting_room'
+            : activeSession.status === 'WAITING_FOR_PARTICIPANT' ? 'waiting_for_participant'
+            : 'resuming',
           sessionId: activeSession.sessionId,
           sessionCode: activeSession.sessionCode,
           difficulty: activeSession.difficulty,
           module: activeSession.module ?? null,
           totalRounds: activeSession.totalScenarios,
+          currentRound: activeSession.currentRound ?? 1,
+          attackerScore: activeSession.attackerScore ?? 0,
+          defenderScore: activeSession.defenderScore ?? 0,
           attackerName: activeSession.attackerName,
           defenderName: activeSession.defenderName,
           role: activeSession.role,
+          mode: assessmentModeOf(activeSession.mode),
         });
-        connectSocket();
-        setTimeout(() => {
-          socketRef.current?.emit('joinSession', { sessionId: activeSession.sessionId });
-        }, 300);
+        joinRoom(activeSession.sessionId);
         return 'active';
       }
 
       if (pendingPostTestSession) {
         const reportRes = await apiClient.get(`/sessions/${pendingPostTestSession.sessionId}/report`);
+        if (isStale()) return 'stale';
         if (reportRes.data.success) {
           dispatch({
             type: 'POST_TEST_REHYDRATED',
@@ -639,9 +724,36 @@ export function useScenarioSession() {
 
       return null;
     } catch {
-      return null;
+      return isStale() ? 'stale' : 'error';
     }
-  }, [connectSocket]);
+  }, [joinRoom]);
+
+  // Replay watchdog: armed whenever we're resuming without an error, and
+  // cleared by any phase change (successful replay), a failure, retry, or
+  // unmount — the effect cleanup owns the timer, nothing else does.
+  useEffect(() => {
+    if (state.phase !== 'resuming' || state.resumeError) return;
+    const timer = setTimeout(() => {
+      dispatch({ type: 'RESUME_FAILED', error: 'The session did not respond in time.' });
+    }, RESUME_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [state.phase, state.resumeError]);
+
+  // Retry from the resume error screen: drop the old socket, re-check what
+  // is resumable (the session may have moved on or finished), reconnect.
+  // Never writes to the session itself.
+  const retryResume = useCallback(async () => {
+    teardown();
+    dispatch({ type: 'RESUME_RETRY' });
+    const outcome = await rehydrateActiveSession();
+    if (outcome === 'stale') return; // left or retried again meanwhile
+    if (outcome === 'error') {
+      dispatch({ type: 'RESUME_FAILED', error: 'Could not reach the server. Check your connection and try again.' });
+    } else if (outcome === null) {
+      dispatch({ type: 'RESET' });
+      dispatch({ type: 'SET_ERROR', error: 'That session can no longer be resumed.' });
+    }
+  }, [rehydrateActiveSession, teardown]);
 
   const markReady = useCallback(() => {
     const { sessionId } = stateRef.current;
@@ -689,10 +801,9 @@ export function useScenarioSession() {
   }, []);
 
   const reset = useCallback(() => {
-    socketRef.current?.disconnect();
-    socketRef.current = null;
+    teardown();
     dispatch({ type: 'RESET' });
-  }, []);
+  }, [teardown]);
 
   const clearError = useCallback(() => {
     dispatch({ type: 'SET_ERROR', error: null });
@@ -704,6 +815,7 @@ export function useScenarioSession() {
     createSoloSession,
     joinSession,
     rehydrateActiveSession,
+    retryResume,
     markReady,
     submitAttack,
     submitDefense,

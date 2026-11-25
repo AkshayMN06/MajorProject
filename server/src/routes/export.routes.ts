@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authenticate, AuthRequest } from '../middleware/auth';
+import { authorizeSessionAccess } from '../middleware/sessionAccess';
 import { toCsv } from '../utils/csv';
 import { buildAssessmentReport } from '../services/reportBuilder';
 
@@ -8,24 +9,6 @@ const prisma = new PrismaClient();
 const router = Router();
 
 router.use(authenticate);
-
-/**
- * Only a session's own attacker/defender may export its data — these files
- * contain per-round choices and quiz results, not something any logged-in
- * user should be able to pull for an arbitrary sessionId.
- */
-async function authorizeSessionAccess(req: AuthRequest, res: Response, sessionId: string) {
-  const session = await prisma.session.findUnique({ where: { id: sessionId } });
-  if (!session) {
-    res.status(404).json({ success: false, error: 'Session not found' });
-    return null;
-  }
-  if (session.attackerId !== req.user.id && session.defenderId !== req.user.id) {
-    res.status(403).json({ success: false, error: 'You are not a participant in this session' });
-    return null;
-  }
-  return session;
-}
 
 function sendCsv(res: Response, filename: string, csv: string) {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');

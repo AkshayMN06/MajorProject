@@ -1,6 +1,6 @@
-// Ops utility — sets or revokes a user's admin role by email. Never invoked
+// Ops utility — sets a user's role (USER, TEACHER or ADMIN) by email. Never invoked
 // by application code; the app has zero email-based admin logic anywhere.
-// Usage: npx tsx prisma/promoteAdmin.ts <email> [USER|ADMIN]
+// Usage: npx tsx prisma/promoteAdmin.ts <email> [USER|TEACHER|ADMIN]
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -10,11 +10,11 @@ async function main() {
   const role = (process.argv[3] ?? 'ADMIN').toUpperCase();
 
   if (!email) {
-    console.error('Usage: npx tsx prisma/promoteAdmin.ts <email> [USER|ADMIN]');
+    console.error('Usage: npx tsx prisma/promoteAdmin.ts <email> [USER|TEACHER|ADMIN]');
     process.exit(1);
   }
-  if (role !== 'USER' && role !== 'ADMIN') {
-    console.error(`Invalid role "${role}" — expected USER or ADMIN.`);
+  if (!['USER', 'TEACHER', 'ADMIN'].includes(role)) {
+    console.error(`Invalid role "${role}" — expected USER, TEACHER or ADMIN.`);
     process.exit(1);
   }
 

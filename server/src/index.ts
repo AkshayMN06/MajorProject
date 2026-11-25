@@ -21,6 +21,7 @@ import quizRoutes from './routes/quiz.routes';
 import exportRoutes from './routes/export.routes';
 import practiceRoutes from './routes/practice.routes';
 import adminRoutes from './routes/admin.routes';
+import adminModulesRoutes from './routes/adminModules.routes';
 
 const app = express();
 const httpServer = createServer(app);
@@ -47,11 +48,19 @@ app.use('/api/labs', labsRoutes);
 app.use('/api/quiz', quizRoutes);
 app.use('/api/export', exportRoutes);
 app.use('/api/practice', practiceRoutes);
+// Mounted before /api/admin: module management is open to teachers, the
+// rest of /api/admin stays admin-only.
+app.use('/api/admin/modules', adminModulesRoutes);
 app.use('/api/admin', adminRoutes);
 
 // Global Error Handler
 app.use(errorHandler);
 
+// On Vercel the platform owns the listener: the module's default export (the
+// HTTP server, with Socket.IO attached) handles each request/upgrade.
+export default httpServer;
+
+if (!process.env.VERCEL) {
 // Graceful shutdown
 const shutdown = () => {
   console.log('Shutting down gracefully...');
@@ -73,3 +82,4 @@ process.on('SIGINT', shutdown);
 httpServer.listen(env.PORT, () => {
   console.log(`🚀 CyberLearn server running on port ${env.PORT}`);
 });
+}

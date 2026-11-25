@@ -2,43 +2,50 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// PostgreSQL (Supabase in deployment). DATABASE_URL is the runtime
+// connection (on Vercel: Supabase's transaction pooler with
+// ?pgbouncer=true); DIRECT_URL is a direct/session connection used by
+// `prisma migrate`. Locally both can point at the same database.
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
-  id            String           @id @default(cuid())
-  email         String           @unique
-  password      String
-  name          String
-  usn           String?
-  department    String?
-  semester      Int?
-  college       String?
-  avatar        String?
-  bio           String?
-  phone         String?
-  location      String?
-  preferredRole String?
-  timezone      String?
-  role          String           @default("USER") // 'USER' | 'ADMIN' — never placed in the JWT; authenticate() reloads this from the DB on every request, so promotion/demotion takes effect immediately without re-login
-  failedLoginCount Int           @default(0)
-  lockedUntil   DateTime?
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  id               String    @id @default(cuid())
+  email            String    @unique
+  password         String
+  name             String
+  usn              String?
+  department       String?
+  semester         Int?
+  college          String?
+  avatar           String?
+  bio              String?
+  phone            String?
+  location         String?
+  preferredRole    String?
+  timezone         String?
+  role             String    @default("USER") // 'USER' | 'TEACHER' | 'ADMIN' — never placed in the JWT; authenticate() reloads this from the DB on every request, so promotion/demotion takes effect immediately without re-login
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  attackerSessions Session[]       @relation("AttackerSessions")
-  defenderSessions Session[]       @relation("DefenderSessions")
-  attempts         Attempt[]
-  scores           Score[]
-  recommendations  Recommendation[]
-  analytics        Analytics[]
-  quizAttempts     QuizAttempt[]
+  attackerSessions    Session[]            @relation("AttackerSessions")
+  defenderSessions    Session[]            @relation("DefenderSessions")
+  attempts            Attempt[]
+  scores              Score[]
+  recommendations     Recommendation[]
+  analytics           Analytics[]
+  quizAttempts        QuizAttempt[]
   assessmentSnapshots AssessmentSnapshot[]
-  practiceSessions PracticeSession[]
-  lessonProgress   LessonProgress[]
-  securityEvents   SecurityEvent[]
+  practiceSessions    PracticeSession[]
+  lessonProgress      LessonProgress[]
+  modulesCreated      Module[]             @relation("ModulesCreated")
+  moduleFilesUploaded ModuleFile[]         @relation("ModuleFilesUploaded")
+  securityEvents      SecurityEvent[]
   passwordResetTokens PasswordResetToken[]
 
   @@map("users")
@@ -50,7 +57,7 @@ model SecurityEvent {
   id        String   @id @default(cuid())
   userId    String? // null when the actor isn't a known user yet (e.g. failed login with a bad email)
   email     String? // snapshot of the attempted email, for failed logins where userId is null
-  type      String   // 'LOGIN_SUCCESS' | 'LOGIN_FAILURE' | 'ACCOUNT_LOCKED' | 'PASSWORD_CHANGED' | 'PASSWORD_RESET_REQUESTED' | 'PASSWORD_RESET_COMPLETED'
+  type      String // 'LOGIN_SUCCESS' | 'LOGIN_FAILURE' | 'ACCOUNT_LOCKED' | 'PASSWORD_CHANGED' | 'PASSWORD_RESET_REQUESTED' | 'PASSWORD_RESET_COMPLETED'
   ip        String?
   userAgent String?
   createdAt DateTime @default(now())
@@ -77,33 +84,35 @@ model PasswordResetToken {
 }
 
 model Session {
-  id                   String    @id @default(cuid())
-  sessionCode          String?   @unique
-  attackerId           String
-  defenderId           String?
-  status               String    @default("WAITING_FOR_PARTICIPANT")
-  mode                 String    @default("PAIRED") // 'PAIRED' | 'SOLO'
-  soloRole             String? // 'ATTACKER' | 'DEFENDER' — which role the human plays in a SOLO session; null for PAIRED. In SOLO, attackerId and defenderId are both the same human, and the other role's choice each round is system-generated (see sessionActions.ts).
-  difficulty           String?
-  module               String?
-  currentScenarioIndex Int       @default(0)
-  totalScenarios       Int       @default(5)
-  attackerReady        Boolean   @default(false)
-  defenderReady        Boolean   @default(false)
-  scenarioIds          Json?
-  attackerScore        Int       @default(0)
-  defenderScore        Int       @default(0)
-  createdAt            DateTime  @default(now())
-  completedAt          DateTime?
+  id                    String    @id @default(cuid())
+  sessionCode           String?   @unique
+  attackerId            String
+  defenderId            String?
+  status                String    @default("WAITING_FOR_PARTICIPANT")
+  mode                  String    @default("PAIRED") // 'PAIRED' | 'SOLO'
+  soloRole              String? // 'ATTACKER' | 'DEFENDER' — which role the human plays in a SOLO session; null for PAIRED. In SOLO, attackerId and defenderId are both the same human, and the other role's choice each round is system-generated (see sessionActions.ts).
+  difficulty            String?
+  module                String?
+  currentScenarioIndex  Int       @default(0)
+  totalScenarios        Int       @default(5)
+  attackerReady         Boolean   @default(false)
+  defenderReady         Boolean   @default(false)
+  scenarioIds           Json?
+  roundState            Json?
+  attackerScore         Int       @default(0)
+  defenderScore         Int       @default(0)
+  createdAt             DateTime  @default(now())
+  completedAt           DateTime?
+  completionArtifactsAt DateTime?
 
   attacker User  @relation("AttackerSessions", fields: [attackerId], references: [id])
   defender User? @relation("DefenderSessions", fields: [defenderId], references: [id])
 
-  attempts     Attempt[]
-  events       Event[]
-  scores       Score[]
+  attempts            Attempt[]
+  events              Event[]
+  scores              Score[]
   assessmentSnapshots AssessmentSnapshot[]
-  quizAttempts QuizAttempt[]
+  quizAttempts        QuizAttempt[]
 
   @@map("sessions")
 }
@@ -156,6 +165,8 @@ model Attempt {
   timeTaken   Int
   explanation String
   createdAt   DateTime @default(now())
+  // Retain historical data without exposing it through Prisma Client.
+  parameters  Json?    @ignore
 
   session  Session  @relation(fields: [sessionId], references: [id])
   scenario Scenario @relation(fields: [scenarioId], references: [id])
@@ -195,6 +206,9 @@ model Score {
   consistency      Int
   repeatedMistakes Int
   createdAt        DateTime @default(now())
+  // Legacy score components from the original scoring schema.
+  configuration    Int      @default(0) @ignore
+  reasoning        Int      @default(0) @ignore
 
   user    User     @relation(fields: [userId], references: [id])
   session Session? @relation(fields: [sessionId], references: [id])
@@ -255,6 +269,9 @@ model Analytics {
 
   user User @relation(fields: [userId], references: [id])
 
+  // One aggregate row per learner and category; AnalyticsEngine.updateAnalytics
+  // upserts against this key.
+  @@unique([userId, category])
   @@map("analytics")
 }
 
@@ -306,7 +323,7 @@ model QuizAttempt {
   completedAt    DateTime?
 
   user      User           @relation(fields: [userId], references: [id])
-  session   Session?       @relation(fields: [sessionId], references: [id])
+  session   Session?       @relation(fields: [sessionId], references: [id], onDelete: Restrict)
   responses QuizResponse[]
 
   @@unique([sessionId, userId, testType])
@@ -432,20 +449,70 @@ model PracticeResponse {
   @@map("practice_responses")
 }
 
+// Curriculum module. Predefined modules come from moduleData.ts
+// (createdById = null); teacher/admin-authored modules carry their author.
+// Lifecycle: DRAFT -> PUBLISHED <-> DRAFT (unpublish) -> ARCHIVED (soft
+// delete, deletedAt set). Students only ever see PUBLISHED; archived rows,
+// their lessons and learners' LessonProgress are kept for history.
 model Module {
   id          String @id @default(cuid())
   name        String
   description String
   category    String
-  difficulty  String
-  duration    Int
+  difficulty  String // 'Easy' | 'Medium' | 'Hard' (shown to authors as Beginner/Intermediate/Advanced)
+  duration    Int // estimated learning time, minutes
   type        String
   content     Json
   order       Int
 
-  lessons Lesson[]
+  // 'BUILTIN' (seeded from moduleData.ts) | 'AUTHORED' (teacher/admin). Stable
+  // origin: unlike createdById it survives the author's account deletion.
+  origin             String    @default("BUILTIN")
+  status             String    @default("PUBLISHED") // 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+  // lower(trim(name)) while not archived, null once archived — the unique
+  // index makes active titles unique while archived titles can be reused.
+  activeTitleKey     String?   @unique
+  learningObjectives String?
+  thumbnailUrl       String?
+  tags               Json? // string[]
+  referenceMaterials String?
+  createdById        String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @default(now()) @updatedAt
+  publishedAt        DateTime?
+  deletedAt          DateTime?
 
+  createdBy User?        @relation("ModulesCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  lessons   Lesson[]
+  files     ModuleFile[]
+
+  @@index([status])
   @@map("modules")
+}
+
+// An uploaded learning-material file. The original bytes live in private
+// storage (MODULE_FILE_DIR) under storedFileName — a server-generated name,
+// never the user's — and are only served through the authorized download
+// route. Paths are never exposed in API responses.
+model ModuleFile {
+  id               String   @id @default(cuid())
+  moduleId         String
+  originalFileName String // sanitized display name
+  storedFileName   String   @unique
+  fileType         String // 'pdf' | 'docx' | 'pptx' | 'txt'
+  mimeType         String
+  fileSize         Int
+  extractedText    String?
+  processingStatus String // 'EXTRACTED' | 'NO_TEXT'
+  processingNote   String?
+  uploadedById     String?
+  uploadedAt       DateTime @default(now())
+
+  module     Module @relation(fields: [moduleId], references: [id])
+  uploadedBy User?  @relation("ModuleFilesUploaded", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([moduleId])
+  @@map("module_files")
 }
 
 model Lesson {

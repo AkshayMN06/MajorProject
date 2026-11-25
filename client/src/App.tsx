@@ -16,6 +16,7 @@ import ResetPasswordPage from './pages/ResetPasswordPage';
 
 import AdminDashboardPage from './pages/AdminDashboardPage';
 import AdminSecurityPage from './pages/AdminSecurityPage';
+import ModuleManagementPage from './pages/ModuleManagementPage';
 
 import { AuthInitializer } from './components/auth/AuthInitializer';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
@@ -46,6 +47,9 @@ function App() {
               </Route>
               <Route path="profile" element={<ProfilePage />} />
               <Route path="settings" element={<SettingsPage />} />
+              <Route element={<AdminRoute roles={['ADMIN', 'TEACHER']} />}>
+                <Route path="admin/modules" element={<ModuleManagementPage />} />
+              </Route>
               <Route element={<AdminRoute />}>
                 <Route path="admin" element={<AdminDashboardPage />} />
                 <Route path="admin/security" element={<AdminSecurityPage />} />

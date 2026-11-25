@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
@@ -6,6 +6,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 export const MainLayout: React.FC = () => {
   const location = useLocation();
+  // Below md the sidebar is an off-canvas drawer; it closes on navigation.
+  const [navOpen, setNavOpen] = useState(false);
+  useEffect(() => { setNavOpen(false); }, [location.pathname]);
 
   return (
     <div className="min-h-screen bg-[#050811] text-white flex overflow-hidden relative selection:bg-[#00d4ff]/30 selection:text-white">
@@ -17,11 +20,11 @@ export const MainLayout: React.FC = () => {
         <div className="absolute inset-0 bg-[linear-gradient(rgba(30,41,59,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(30,41,59,0.1)_1px,transparent_1px)] bg-[size:40px_40px] [mask-image:radial-gradient(ellipse_at_center,black_40%,transparent_100%)]"></div>
       </div>
 
-      <Sidebar />
-      <TopBar />
-      
-      <main className="ml-[240px] pt-20 flex-1 h-screen overflow-y-auto relative z-10 custom-scrollbar">
-        <div className="p-8 pb-20 max-w-7xl mx-auto">
+      <Sidebar open={navOpen} onClose={() => setNavOpen(false)} />
+      <TopBar onMenu={() => setNavOpen(true)} menuOpen={navOpen} />
+
+      <main className="md:ml-[240px] pt-20 flex-1 min-w-0 h-screen overflow-y-auto relative z-10 custom-scrollbar">
+        <div className="p-3 sm:p-6 md:p-8 pb-20 max-w-7xl mx-auto">
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}

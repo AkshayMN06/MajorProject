@@ -19,7 +19,7 @@ export const LoginPage: React.FC = () => {
     try {
       await login(email, password);
       navigate('/');
-    } catch (err) {
+    } catch {
       // Error is handled in store, but we catch to prevent unhandled rejections
     }
   };

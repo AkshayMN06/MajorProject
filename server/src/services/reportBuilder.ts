@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { buildLearningOutcomes } from './learningOutcomes';
 
 const prisma = new PrismaClient();
@@ -69,18 +69,18 @@ function buildRecommendations(categories: CategoryStat[], role: 'attacker' | 'de
  * assessmentCompleted socket emit and the REST report endpoints, so the two
  * transports never disagree on shape.
  */
-export async function buildAssessmentReport(sessionId: string) {
-  const session = await prisma.session.findUnique({
+export async function buildAssessmentReport(sessionId: string, db: Prisma.TransactionClient = prisma) {
+  const session = await db.session.findUnique({
     where: { id: sessionId },
     include: { attacker: true, defender: true },
   });
   if (!session) return null;
 
-  const events = await prisma.event.findMany({
+  const events = await db.event.findMany({
     where: { sessionId },
     orderBy: { turnId: 'asc' },
   });
-  const scores = await prisma.score.findMany({
+  const scores = await db.score.findMany({
     where: { sessionId },
     orderBy: { roundNumber: 'asc' },
   });
@@ -91,7 +91,7 @@ export async function buildAssessmentReport(sessionId: string) {
   const partials = events.filter((e) => e.outcome === 'partially_defended').length;
 
   const scenarioIds = Array.from(new Set(events.map((e) => e.scenarioId)));
-  const scenarios = await prisma.scenario.findMany({ where: { id: { in: scenarioIds } } });
+  const scenarios = await db.scenario.findMany({ where: { id: { in: scenarioIds } } });
   const scenarioCategoryMap = new Map(scenarios.map((s) => [s.id, s.category]));
 
   // Attacker "succeeds" on breached; defender "succeeds" on defended.
@@ -126,8 +126,8 @@ export async function buildAssessmentReport(sessionId: string) {
     recommendations: [],
   };
   const [attackerLearningOutcomes, defenderLearningOutcomes] = await Promise.all([
-    buildLearningOutcomes(prisma, session.attackerId, session.id),
-    session.defenderId ? buildLearningOutcomes(prisma, session.defenderId, session.id) : Promise.resolve(emptyLearningOutcomes),
+    buildLearningOutcomes(db, session.attackerId, session.id),
+    session.defenderId ? buildLearningOutcomes(db, session.defenderId, session.id) : Promise.resolve(emptyLearningOutcomes),
   ]);
 
   const rounds = Array.from(
@@ -153,6 +153,7 @@ export async function buildAssessmentReport(sessionId: string) {
   return {
     sessionId,
     sessionCode: session.sessionCode,
+    mode: session.mode, // 'PAIRED' (shown as Collaborative) | 'SOLO' (shown as Individual)
     attackerName: session.attacker.name,
     defenderName: session.defender?.name ?? 'Unknown',
     totalRounds,

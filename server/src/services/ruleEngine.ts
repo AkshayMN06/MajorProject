@@ -1,5 +1,5 @@
-import { PrismaClient } from '@prisma/client';
-import { scoreEngine, ScoreBreakdown } from './scoreEngine';
+import { Prisma, PrismaClient } from '@prisma/client';
+import { ScoreEngine, ScoreBreakdown } from './scoreEngine';
 import { EventLogger } from './eventLogger';
 import { AnalyticsEngine } from './analyticsEngine';
 import { resolveOutcome as resolveRuleOutcome } from './ruleResolver';
@@ -20,6 +20,7 @@ export interface EvaluateInput {
   // Solo mode: true for the side whose choice was system-generated rather
   // than picked by the human. That side's Attempt/Score/Analytics rows are
   // skipped so a system-random pick never pollutes the human's own history.
+  turnId?: number;
   attackerIsSystem?: boolean;
   defenderIsSystem?: boolean;
 }
@@ -42,19 +43,20 @@ export interface EvaluateResult {
  * round — see sessionActions.advanceRound.)
  */
 export class RuleEngine {
-  public async evaluate(input: EvaluateInput): Promise<EvaluateResult> {
+  public async evaluate(input: EvaluateInput, db: Prisma.TransactionClient = prisma): Promise<EvaluateResult> {
+    const scoreEngine = new ScoreEngine(db);
     // 1. Validate Scenario
-    const scenario = await this.validateScenario(input.scenarioId);
+    const scenario = await this.validateScenario(db, input.scenarioId);
 
     // 2. Validate Inputs
     this.validateInputs(scenario, input.attackerChoice, input.defenderChoice);
 
     // 3. Global Rules
-    await this.globalRuleChecks(input.sessionId);
+    await this.globalRuleChecks(db, input.sessionId);
 
     // 4-7. Defense Rules -> Attack Rules -> Modifiers -> Outcome
     const { outcome, explanation } = await resolveRuleOutcome(
-      prisma,
+      db,
       scenario.id,
       input.attackerChoice,
       input.defenderChoice
@@ -92,7 +94,7 @@ export class RuleEngine {
     const recommendedControl =
       outcome === 'defended'
         ? null
-        : await findRecommendedControl(prisma, scenario.id, input.attackerChoice, defenseOptions);
+        : await findRecommendedControl(db, scenario.id, input.attackerChoice, defenseOptions);
 
     const finalExplanation = buildFeedback({
       outcome,
@@ -104,7 +106,7 @@ export class RuleEngine {
     });
 
     // 10. Event Log
-    const turnId = (await prisma.event.count({ where: { sessionId: input.sessionId } })) + 1;
+    const turnId = input.turnId ?? (await db.event.count({ where: { sessionId: input.sessionId } })) + 1;
     await EventLogger.logEvent({
       turnId,
       sessionId: input.sessionId,
@@ -116,13 +118,13 @@ export class RuleEngine {
       score: defenderScoreBreakdown.total,
       timeTaken: input.defenderTimeTaken,
       timestamp: new Date().toISOString(),
-    });
+    }, db);
 
     // Attempts — persisted for both roles so consistency/repeated-mistake
     // tracking works symmetrically. Skipped for a system-controlled side
     // (solo mode) so a random system pick never enters the human's history.
     if (!input.defenderIsSystem) {
-      await prisma.attempt.create({
+      await db.attempt.create({
         data: {
           sessionId: input.sessionId,
           scenarioId: scenario.id,
@@ -137,7 +139,7 @@ export class RuleEngine {
       });
     }
     if (!input.attackerIsSystem) {
-      await prisma.attempt.create({
+      await db.attempt.create({
         data: {
           sessionId: input.sessionId,
           scenarioId: scenario.id,
@@ -155,7 +157,7 @@ export class RuleEngine {
     // Per-round Score rows — makes real score history available instead of
     // only the two running Session totals.
     if (!input.defenderIsSystem) {
-      await prisma.score.create({
+      await db.score.create({
         data: {
           userId: input.defenderId,
           sessionId: input.sessionId,
@@ -170,7 +172,7 @@ export class RuleEngine {
       });
     }
     if (!input.attackerIsSystem) {
-      await prisma.score.create({
+      await db.score.create({
         data: {
           userId: input.attackerId,
           sessionId: input.sessionId,
@@ -187,10 +189,10 @@ export class RuleEngine {
 
     // 11. Analytics — single source of truth (AnalyticsEngine), for both users.
     if (!input.defenderIsSystem) {
-      await AnalyticsEngine.updateAnalytics(input.defenderId, scenario.category, outcome === 'defended', input.defenderTimeTaken);
+      await AnalyticsEngine.updateAnalytics(input.defenderId, scenario.category, outcome === 'defended', input.defenderTimeTaken, db);
     }
     if (!input.attackerIsSystem) {
-      await AnalyticsEngine.updateAnalytics(input.attackerId, scenario.category, outcome === 'breached', input.attackerTimeTaken);
+      await AnalyticsEngine.updateAnalytics(input.attackerId, scenario.category, outcome === 'breached', input.attackerTimeTaken, db);
     }
 
     return {
@@ -204,8 +206,8 @@ export class RuleEngine {
     };
   }
 
-  private async validateScenario(scenarioId: string) {
-    const scenario = await prisma.scenario.findUnique({ where: { id: scenarioId } });
+  private async validateScenario(db: Prisma.TransactionClient, scenarioId: string) {
+    const scenario = await db.scenario.findUnique({ where: { id: scenarioId } });
     if (!scenario) {
       throw new Error(`Scenario ${scenarioId} not found`);
     }
@@ -227,8 +229,8 @@ export class RuleEngine {
     }
   }
 
-  private async globalRuleChecks(sessionId: string) {
-    const session = await prisma.session.findUnique({ where: { id: sessionId } });
+  private async globalRuleChecks(db: Prisma.TransactionClient, sessionId: string) {
+    const session = await db.session.findUnique({ where: { id: sessionId } });
     if (!session) {
       throw new Error(`Session ${sessionId} not found`);
     }

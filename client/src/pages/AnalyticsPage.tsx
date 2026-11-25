@@ -176,7 +176,7 @@ export const AnalyticsPage: React.FC = () => {
                       <RechartsTooltip
                         contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
                         itemStyle={{ color: '#e2e8f0' }}
-                        labelFormatter={(label: string, payload) => {
+                        labelFormatter={(label, payload) => {
                           const point = payload?.[0]?.payload as PerformanceTrendPoint | undefined;
                           return point ? `${label} — ${point.date} ${point.time}` : label;
                         }}

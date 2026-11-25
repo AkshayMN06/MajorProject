@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
   Terminal, Target, Shield, Plus, LogIn, User,
   ChevronDown, Loader2, X, AlertCircle, Shuffle
@@ -35,8 +35,6 @@ export const CreateSessionModal: React.FC<CreateModalProps> = ({
     onCreate({ difficulty, totalScenarios: rounds, module, interleaved });
   };
 
-  const inputClass = 'w-full bg-[#0a0f1e] border border-gray-700 rounded-lg py-2.5 px-4 text-white text-sm focus:outline-none focus:border-indigo-500 transition-colors';
-
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -59,8 +57,8 @@ export const CreateSessionModal: React.FC<CreateModalProps> = ({
               <Plus size={17} className="text-red-400" />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-white">Create Session</h3>
-              <p className="text-xs text-gray-500">You will be assigned as Attacker</p>
+              <h3 className="text-lg font-bold text-white">Create Collaborative Session</h3>
+              <p className="text-xs text-gray-500">Collaborative assessment — you will be assigned as Attacker</p>
             </div>
           </div>
           <button onClick={onClose} className="text-gray-600 hover:text-gray-300 transition-colors p-1">
@@ -171,7 +169,9 @@ export const CreateSessionModal: React.FC<CreateModalProps> = ({
   );
 };
 
-// ─── Practice Solo Modal ──────────────────────────────────────────────────────
+// ─── Individual Assessment Modal ──────────────────────────────────────────────
+// UI name "Individual"; the API route (/sessions/solo), persisted mode value
+// ('SOLO') and these identifiers keep the original name for compatibility.
 interface SoloModalProps {
   onClose: () => void;
   onStart: (opts: { difficulty: string; totalScenarios: number; module: string; soloRole: 'ATTACKER' | 'DEFENDER'; interleaved: boolean }) => void;
@@ -222,8 +222,8 @@ export const PracticeSoloModal: React.FC<SoloModalProps> = ({
               <User size={17} className="text-indigo-400" />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-white">Practice Solo</h3>
-              <p className="text-xs text-gray-500">Play both sides yourself — no partner needed</p>
+              <h3 className="text-lg font-bold text-white">Individual Assessment</h3>
+              <p className="text-xs text-gray-500">Play one role yourself — the system plays the other side</p>
             </div>
           </div>
           <button onClick={onClose} className="text-gray-600 hover:text-gray-300 transition-colors p-1">
@@ -356,7 +356,7 @@ export const PracticeSoloModal: React.FC<SoloModalProps> = ({
               className="flex-1 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-[0_0_20px_rgba(99,102,241,0.4)] transition-shadow"
             >
               {isLoading ? <Loader2 size={15} className="animate-spin" /> : <User size={15} />}
-              {isLoading ? 'Starting...' : 'Start Solo Practice'}
+              {isLoading ? 'Starting...' : 'Start Individual Assessment'}
             </button>
           </div>
         </form>
@@ -405,8 +405,8 @@ export const JoinSessionModal: React.FC<JoinModalProps> = ({
               <LogIn size={17} className="text-teal-400" />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-white">Join Session</h3>
-              <p className="text-xs text-gray-500">You will be assigned as Defender</p>
+              <h3 className="text-lg font-bold text-white">Join Collaborative Session</h3>
+              <p className="text-xs text-gray-500">Collaborative assessment — you will be assigned as Defender</p>
             </div>
           </div>
           <button onClick={onClose} className="text-gray-600 hover:text-gray-300 transition-colors p-1">
@@ -484,7 +484,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onCreateClick, onJoinC
           </h1>
           <p className="text-gray-400 text-base max-w-lg mx-auto leading-relaxed">
             A cybersecurity assessment where students take on the roles of Attacker and Defender
-            across real-world scenarios — with a partner, or solo against the system.
+            across real-world scenarios — together in a <span className="text-gray-300">Collaborative</span> assessment, or on your own in an <span className="text-gray-300">Individual</span> assessment against the system.
           </p>
           {user && (
             <p className="text-sm text-gray-600 mt-3">
@@ -506,6 +506,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onCreateClick, onJoinC
             <div className="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
               <Target className="w-7 h-7 text-red-400" />
             </div>
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-red-400/80 mb-1">Collaborative</span>
             <h2 className="text-lg font-bold text-white mb-2">Create Session</h2>
             <p className="text-sm text-gray-400 leading-relaxed mb-4">
               Start a new assessment session. You'll be assigned the <span className="text-red-400">Attacker</span> role and receive a shareable session code.
@@ -527,6 +528,7 @@ export const LandingView: React.FC<LandingViewProps> = ({ onCreateClick, onJoinC
             <div className="w-14 h-14 rounded-2xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
               <Shield className="w-7 h-7 text-teal-400" />
             </div>
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-teal-400/80 mb-1">Collaborative</span>
             <h2 className="text-lg font-bold text-white mb-2">Join Session</h2>
             <p className="text-sm text-gray-400 leading-relaxed mb-4">
               Enter a session code from your partner. You'll be assigned the <span className="text-teal-400">Defender</span> role automatically.
@@ -548,12 +550,13 @@ export const LandingView: React.FC<LandingViewProps> = ({ onCreateClick, onJoinC
             <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
               <User className="w-7 h-7 text-indigo-400" />
             </div>
-            <h2 className="text-lg font-bold text-white mb-2">Practice Solo</h2>
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-indigo-400/80 mb-1">Individual</span>
+            <h2 className="text-lg font-bold text-white mb-2">Individual Assessment</h2>
             <p className="text-sm text-gray-400 leading-relaxed mb-4">
               No partner? Play <span className="text-indigo-400">either role</span> yourself — the system plays the other side each round.
             </p>
             <span className="flex items-center gap-2 text-sm font-semibold text-indigo-400 group-hover:text-indigo-300">
-              <User size={15} /> Start Solo
+              <User size={15} /> Start Individual
             </span>
           </motion.button>
         </div>

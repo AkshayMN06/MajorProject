@@ -1,16 +1,17 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Target, Shield, ArrowRight, BookOpen, ChevronRight } from 'lucide-react';
-import type { RoundResult as RoundResultType } from '../../hooks/useScenarioSession';
-import { OutcomeBadge, RoundProgress } from './ScenarioShared';
+import { Target, Shield, BookOpen, ChevronRight } from 'lucide-react';
+import type { RoundResult as RoundResultType, AssessmentMode } from '../../hooks/useScenarioSession';
+import { OutcomeBadge, RoundProgress, ModeBadge } from './ScenarioShared';
 
 interface ResultPanelProps {
   result: RoundResultType;
   role: 'attacker' | 'defender';
+  mode?: AssessmentMode | null;
   onContinue: () => void;
 }
 
-const ResultPanel: React.FC<ResultPanelProps> = ({ result, role, onContinue }) => {
+const ResultPanel: React.FC<ResultPanelProps> = ({ result, role, mode, onContinue }) => {
   const isLastRound = result.roundNumber >= result.totalRounds;
 
   const outcomeGlow =
@@ -29,11 +30,14 @@ const ResultPanel: React.FC<ResultPanelProps> = ({ result, role, onContinue }) =
         className={`w-full max-w-2xl bg-[#0f1629]/90 border border-[#1e293b] rounded-2xl p-8 ${outcomeGlow}`}
       >
         {/* Round & outcome header */}
-        <div className="flex items-start justify-between mb-6">
-          <div>
-            <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">
-              Round {result.roundNumber} Result
-            </p>
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2 mb-1">
+              <p className="text-xs text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                Round {result.roundNumber} Result
+              </p>
+              <ModeBadge mode={mode} />
+            </div>
             <h2 className="text-xl font-bold text-white">{result.scenarioName}</h2>
           </div>
           <OutcomeBadge outcome={result.outcome} />

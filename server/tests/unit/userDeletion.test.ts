@@ -25,6 +25,8 @@ function fakePrisma() {
       session: stub('session'),
       recommendation: stub('recommendation'),
       analytics: stub('analytics'),
+      lessonProgress: stub('lessonProgress'),
+      passwordResetToken: stub('passwordResetToken'),
       user: { delete: vi.fn(() => { calls.push('user.delete'); return 'op'; }) },
     } as any,
   };

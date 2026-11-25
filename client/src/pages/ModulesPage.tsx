@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import { BookOpen, Loader2, AlertTriangle, Clock, CheckCircle2 } from 'lucide-react';
+import { BookOpen, Loader2, AlertTriangle, Clock, CheckCircle2, FileText } from 'lucide-react';
 import { moduleApi, type ModuleSummary } from '../services/api';
 
 const DIFFICULTIES = ['All', 'Easy', 'Medium', 'Hard'];
@@ -26,6 +26,16 @@ const ModuleCard: React.FC<{ mod: ModuleSummary; onOpen: () => void; delay: numb
       onClick={onOpen}
       className="glass-card p-6 rounded-xl border border-cyber-border bg-white/5 flex flex-col text-left w-full"
     >
+      {mod.thumbnailUrl && (
+        <img
+          src={mod.thumbnailUrl}
+          alt=""
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          className="w-full h-32 object-cover rounded-lg mb-4 border border-cyber-border"
+          onError={(e) => { e.currentTarget.style.display = 'none'; }}
+        />
+      )}
       <div className="flex items-start justify-between mb-4">
         <div className="p-3 bg-indigo-500/20 text-indigo-400 rounded-lg w-fit">
           <BookOpen size={24} />
@@ -48,6 +58,11 @@ const ModuleCard: React.FC<{ mod: ModuleSummary; onOpen: () => void; delay: numb
         <span className="flex items-center gap-1">
           <Clock size={12} /> {mod.duration} min
         </span>
+        {!!mod.fileCount && (
+          <span className="flex items-center gap-1">
+            <FileText size={12} /> {mod.fileCount} {mod.fileCount === 1 ? 'material' : 'materials'}
+          </span>
+        )}
       </div>
 
       <div className="mb-1 flex items-center justify-between text-xs text-gray-500">

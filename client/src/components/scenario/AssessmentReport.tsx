@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion, type Variants } from 'framer-motion';
 import {
   Trophy, Target, Shield, BarChart2, TrendingUp, TrendingDown,
   BookOpen, Download, RefreshCw, CheckCircle, XCircle, MinusCircle, Lightbulb, GraduationCap,
@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import type { AssessmentReport as ReportType } from '../../hooks/useScenarioSession';
+import { assessmentModeOf } from '../../hooks/useScenarioSession';
+import { ModeBadge } from './ScenarioShared';
 import { exportApi } from '../../services/api';
 
 interface AssessmentReportProps {
@@ -19,7 +21,9 @@ const AssessmentReport: React.FC<AssessmentReportProps> = ({ report, role, onRes
   const myScore = role === 'attacker' ? report.attackerFinalScore : report.defenderFinalScore;
   const partnerScore = role === 'attacker' ? report.defenderFinalScore : report.attackerFinalScore;
   const myName = role === 'attacker' ? report.attackerName : report.defenderName;
-  const partnerName = role === 'attacker' ? report.defenderName : report.attackerName;
+  const mode = assessmentModeOf(report.mode);
+  // Individual: the other side was played by the system, not a person.
+  const partnerName = mode === 'individual' ? 'System' : role === 'attacker' ? report.defenderName : report.attackerName;
   const myLearningOutcomes = role === 'attacker' ? report.attackerLearningOutcomes : report.defenderLearningOutcomes;
 
   const [downloadingCsv, setDownloadingCsv] = useState<string | null>(null);
@@ -122,7 +126,7 @@ const AssessmentReport: React.FC<AssessmentReportProps> = ({ report, role, onRes
     hidden: { opacity: 0 },
     show: { opacity: 1, transition: { staggerChildren: 0.06 } },
   };
-  const itemVariants = {
+  const itemVariants: Variants = {
     hidden: { opacity: 0, y: 16 },
     show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 300, damping: 26 } },
   };
@@ -144,6 +148,7 @@ const AssessmentReport: React.FC<AssessmentReportProps> = ({ report, role, onRes
           <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center">
             <Trophy size={28} className="text-indigo-400" />
           </div>
+          <div className="relative mb-2 flex justify-center"><ModeBadge mode={mode} /></div>
           <h1 className="text-3xl font-bold text-white mb-2">Assessment Complete</h1>
           <p className="text-gray-400 text-sm">
             {report.totalRounds} rounds completed — full analysis below
@@ -178,7 +183,7 @@ const AssessmentReport: React.FC<AssessmentReportProps> = ({ report, role, onRes
               ) : (
                 <Shield size={16} className="text-teal-400" />
               )}
-              <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Partner</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-gray-400">{mode === 'individual' ? 'Opponent' : 'Partner'}</span>
             </div>
             <p className="text-4xl font-bold text-white mb-1">{partnerScore}</p>
             <p className="text-xs text-gray-500 truncate">{partnerName}</p>

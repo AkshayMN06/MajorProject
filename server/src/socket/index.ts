@@ -1,9 +1,11 @@
 import { Server, Socket } from 'socket.io';
+import { createAdapter } from '@socket.io/postgres-adapter';
+import pg from 'pg';
 import { Server as HttpServer } from 'http';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env';
 import { PrismaClient } from '@prisma/client';
-import { getRoomState, markReady, submitAttack, submitDefense, advanceRound } from '../services/sessionActions';
+import { getRoomState, markReady, submitAttack, submitDefense, advanceRound, finalizeCompletedAssessment } from '../services/sessionActions';
 import { buildAssessmentReport } from '../services/reportBuilder';
 import { SessionState } from '../services/stateMachine';
 
@@ -13,6 +15,27 @@ const prisma = new PrismaClient();
 let _io: Server;
 export const getIO = () => _io;
 
+// Shared by the submitAttack socket event and POST /api/attack so both push
+// the same events. Individual-as-attacker: submitAttack already chained a
+// system defense and resolved the round, so go straight to the round result
+// instead of the "waiting for a live defender" event.
+export function broadcastAttackResult(
+  io: Pick<Server, 'to'>,
+  sessionId: string,
+  result: Awaited<ReturnType<typeof submitAttack>>
+) {
+  if ('roundResult' in result) {
+    io.to(sessionId).emit('ruleProcessed', {
+      sessionId,
+      outcome: result.roundResult.outcome,
+      explanation: result.roundResult.explanation,
+    });
+    io.to(sessionId).emit('roundCompleted', result.roundResult);
+  } else {
+    io.to(sessionId).emit('attackSubmitted', result);
+  }
+}
+
 export const setupSocket = (httpServer: HttpServer) => {
   const io = new Server(httpServer, {
     cors: {
@@ -21,6 +44,18 @@ export const setupSocket = (httpServer: HttpServer) => {
     }
   });
   _io = io;
+
+  // Several Vercel instances may serve one assessment: the Postgres adapter
+  // relays room broadcasts (and attachments for large payloads) between them.
+  if (env.SOCKET_ADAPTER_URL) {
+    const pool = new pg.Pool({ connectionString: env.SOCKET_ADAPTER_URL, max: 3 });
+    pool.on('error', (err) => console.error('[socket adapter] pool error', err.message));
+    pool
+      .query('CREATE TABLE IF NOT EXISTS socket_io_attachments (id bigserial UNIQUE, created_at timestamptz DEFAULT NOW(), payload bytea)')
+      // 23505: another instance created it at the same moment — fine.
+      .catch((err) => { if (err.code !== '23505') console.error('[socket adapter] could not prepare attachments table', err.message); });
+    io.adapter(createAdapter(pool));
+  }
 
   // Auth middleware
   io.use(async (socket, next) => {
@@ -72,6 +107,7 @@ export const setupSocket = (httpServer: HttpServer) => {
         socket.emit('sessionState', {
           sessionId,
           sessionCode: session.sessionCode,
+          mode: session.mode,
           status: session.status,
           role,
           difficulty: session.difficulty,
@@ -94,7 +130,7 @@ export const setupSocket = (httpServer: HttpServer) => {
           SessionState.RESULT_GENERATED,
         ];
         if (midRoundStatuses.includes(session.status)) {
-          const room = getRoomState(sessionId);
+          const room = getRoomState(session.roundState);
           if (room?.currentScenario) {
             socket.emit('scenarioLoaded', {
               sessionId,
@@ -103,15 +139,24 @@ export const setupSocket = (httpServer: HttpServer) => {
               totalRounds: session.totalScenarios,
               status: session.status,
             });
-            if (isDefender && room.attackChoice && session.status !== SessionState.ATTACK_SELECTION) {
+            if (session.status === SessionState.RESULT_GENERATED && room.result) {
+              socket.emit('roundCompleted', room.result);
+            } else if (room.attack && session.status === SessionState.DEFENSE_SELECTION) {
               socket.emit('attackSubmitted', {
                 sessionId,
-                attackOptionId: room.attackChoice,
-                attackOptionName: room.attackOptionName,
-                attackOptionDescription: room.attackOptionDescription,
+                attackOptionId: room.attack.id,
+                attackOptionName: room.attack.name,
+                attackOptionDescription: room.attack.description,
+                attackCategory: room.attack.category,
+                attackDifficulty: room.attack.difficulty,
               });
             }
           }
+        }
+        if (session.status === SessionState.ASSESSMENT_COMPLETE) {
+          await finalizeCompletedAssessment(session);
+          const report = await buildAssessmentReport(sessionId);
+          socket.emit('assessmentCompleted', { sessionId, report });
         }
       } catch (err: any) {
         socket.emit('sessionError', { message: err.message });
@@ -140,20 +185,8 @@ export const setupSocket = (httpServer: HttpServer) => {
       attackOptionId: string;
     }) => {
       try {
-        const result: any = await submitAttack(data.sessionId, user.id, data.attackOptionId);
-        // Solo-as-attacker: submitAttack already chained a system defense
-        // and resolved the round — go straight to the round result instead
-        // of the normal "waiting for a live defender" event.
-        if (result.roundResult) {
-          io.to(data.sessionId).emit('ruleProcessed', {
-            sessionId: data.sessionId,
-            outcome: result.roundResult.outcome,
-            explanation: result.roundResult.explanation,
-          });
-          io.to(data.sessionId).emit('roundCompleted', result.roundResult);
-        } else {
-          io.to(data.sessionId).emit('attackSubmitted', result);
-        }
+        const result = await submitAttack(data.sessionId, user.id, data.attackOptionId);
+        broadcastAttackResult(io, data.sessionId, result);
       } catch (err: any) {
         socket.emit('sessionError', { message: err.message });
       }
@@ -165,12 +198,12 @@ export const setupSocket = (httpServer: HttpServer) => {
       defenseOptionId: string;
     }) => {
       try {
+        const result = await submitDefense(data.sessionId, user.id, data.defenseOptionId);
+
         io.to(data.sessionId).emit('defenseSubmitted', {
           sessionId: data.sessionId,
           defenseOptionId: data.defenseOptionId,
         });
-
-        const result = await submitDefense(data.sessionId, user.id, data.defenseOptionId);
 
         io.to(data.sessionId).emit('ruleProcessed', {
           sessionId: data.sessionId,

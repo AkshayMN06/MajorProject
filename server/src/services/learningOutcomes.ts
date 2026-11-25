@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 const WEAK_TOPIC_THRESHOLD = 60; // post-test accuracy below this = "needs review"
 const WEAK_MODULE_THRESHOLD = 60;
@@ -34,7 +34,7 @@ type ResponseWithQuestion = {
 
 // At most one row can match — enforced by the QuizAttempt
 // @@unique([sessionId, userId, testType]) constraint.
-async function getAttempt(prisma: PrismaClient, sessionId: string, userId: string, testType: 'PRE' | 'POST') {
+async function getAttempt(prisma: Pick<Prisma.TransactionClient, 'quizAttempt'>, sessionId: string, userId: string, testType: 'PRE' | 'POST') {
   return prisma.quizAttempt.findFirst({
     where: { sessionId, userId, testType, status: 'completed' },
     include: { responses: { include: { question: true } } },
@@ -74,7 +74,7 @@ function accuracyByTopic(responses: ResponseWithQuestion[]): Map<string, { corre
  * attempt ever — otherwise a newer session's report would overwrite an
  * older session's scores.
  */
-export async function buildLearningOutcomes(prisma: PrismaClient, userId: string, sessionId: string): Promise<LearningOutcomes> {
+export async function buildLearningOutcomes(prisma: Pick<Prisma.TransactionClient, 'quizAttempt'>, userId: string, sessionId: string): Promise<LearningOutcomes> {
   const [preAttempt, postAttempt] = await Promise.all([
     getAttempt(prisma, sessionId, userId, 'PRE'),
     getAttempt(prisma, sessionId, userId, 'POST'),

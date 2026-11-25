@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Shield, Send, AlertTriangle } from 'lucide-react';
-import type { Scenario } from '../../hooks/useScenarioSession';
-import { StrategyCard, ScenarioHeader, AssessmentGuide, WaitingOverlay } from './ScenarioShared';
+import type { Scenario, AssessmentMode } from '../../hooks/useScenarioSession';
+import { StrategyCard, ScenarioHeader, AssessmentGuide, WaitingOverlay, ModeBadge } from './ScenarioShared';
 
 interface IncomingAttack {
   id: string;
@@ -19,6 +19,7 @@ interface DefenderViewProps {
   attackerScore: number;
   defenderScore: number;
   sessionCode: string | null;
+  mode?: AssessmentMode | null;
   incomingAttack: IncomingAttack | null;  // null means attack not submitted yet
   isWaiting: boolean;                      // true after submitting defense
   onSubmit: (optionId: string) => void;
@@ -31,6 +32,7 @@ const DefenderView: React.FC<DefenderViewProps> = ({
   attackerScore,
   defenderScore,
   sessionCode,
+  mode,
   incomingAttack,
   isWaiting,
   onSubmit,
@@ -50,7 +52,7 @@ const DefenderView: React.FC<DefenderViewProps> = ({
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6 space-y-5">
       {/* Role badge */}
-      <div className="flex items-center gap-3 border-b border-[#1e293b] pb-4">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-[#1e293b] pb-4">
         <div className="w-8 h-8 rounded-lg bg-teal-500/10 border border-teal-500/30 flex items-center justify-center">
           <Shield size={16} className="text-teal-400" />
         </div>
@@ -58,6 +60,7 @@ const DefenderView: React.FC<DefenderViewProps> = ({
         <span className="px-2 py-0.5 text-xs font-semibold rounded border border-teal-500/30 text-teal-400 bg-teal-500/10 tracking-wider">
           DEFENDER
         </span>
+        <ModeBadge mode={mode} />
       </div>
 
       {/* Scenario header */}

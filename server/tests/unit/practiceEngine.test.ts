@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  $transaction: vi.fn(),
   scenario: { findMany: vi.fn() },
   caseStudy: { findMany: vi.fn() },
   practiceQuestionPool: { findMany: vi.fn() },
   practiceQuestion: { count: vi.fn(), findMany: vi.fn() },
-  practiceSession: { create: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-  practiceResponse: { createMany: vi.fn() },
+  practiceSession: { create: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
+  practiceResponse: { createMany: vi.fn(), deleteMany: vi.fn() },
 }));
 
 vi.mock('@prisma/client', () => ({
@@ -94,6 +95,7 @@ describe('practiceEngine.sampleQuestions', () => {
 describe('practiceEngine — module, case-study, and session validation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.$transaction.mockImplementation((write) => write(mocks));
     mocks.scenario.findMany.mockResolvedValue(LIVE_CATEGORIES);
   });
 
@@ -249,11 +251,22 @@ describe('practiceEngine — module, case-study, and session validation', () => 
       await expect(submitSession('session-1', 'user-1', [])).rejects.toMatchObject({ status: 400 });
     });
 
+    it('does not replace responses after a concurrent submission wins the completion guard', async () => {
+      mocks.practiceSession.findUnique.mockResolvedValue(mockSessionRow());
+      mocks.practiceQuestion.findMany.mockResolvedValue(sessionQuestions);
+      mocks.practiceSession.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(submitSession('session-1', 'user-1', [{ questionId: 'q0', selectedOption: 'A' }]))
+        .rejects.toMatchObject({ status: 400 });
+      expect(mocks.practiceResponse.deleteMany).not.toHaveBeenCalled();
+      expect(mocks.practiceResponse.createMany).not.toHaveBeenCalled();
+    });
+
     it('ignores question ids that do not belong to the session, and scores correctly', async () => {
       mocks.practiceSession.findUnique.mockResolvedValue(mockSessionRow());
       mocks.practiceQuestion.findMany.mockResolvedValue(sessionQuestions);
       mocks.practiceResponse.createMany.mockResolvedValue({ count: 1 });
-      mocks.practiceSession.update.mockResolvedValue({});
+      mocks.practiceSession.updateMany.mockResolvedValue({ count: 1 });
 
       const result = await submitSession('session-1', 'user-1', [
         { questionId: 'q0', selectedOption: 'A' }, // correct
@@ -265,8 +278,8 @@ describe('practiceEngine — module, case-study, and session validation', () => 
       expect(mocks.practiceResponse.createMany).toHaveBeenCalledWith({
         data: [{ sessionId: 'session-1', questionId: 'q0', selectedOption: 'A', isCorrect: true }],
       });
-      expect(mocks.practiceSession.update).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'session-1' }, data: expect.objectContaining({ status: 'completed', score: 1 }) })
+      expect(mocks.practiceSession.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'session-1', userId: 'user-1', status: 'in_progress' }, data: expect.objectContaining({ status: 'completed', score: 1 }) })
       );
     });
 
@@ -274,7 +287,7 @@ describe('practiceEngine — module, case-study, and session validation', () => 
       mocks.practiceSession.findUnique.mockResolvedValue(mockSessionRow());
       mocks.practiceQuestion.findMany.mockResolvedValue(sessionQuestions);
       mocks.practiceResponse.createMany.mockResolvedValue({ count: 1 });
-      mocks.practiceSession.update.mockResolvedValue({});
+      mocks.practiceSession.updateMany.mockResolvedValue({ count: 1 });
 
       const result = await submitSession('session-1', 'user-1', [
         { questionId: 'q0', selectedOption: 'B' }, // wrong first

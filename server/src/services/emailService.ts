@@ -18,12 +18,12 @@ function getTransporter() {
   return transporter;
 }
 
-// No SMTP_HOST configured -> log the link instead of sending, so the
-// forgot-password flow is demoable without real email credentials.
+// No SMTP_HOST configured -> nothing is sent. The link is a live credential
+// and the address is personal data, so neither is ever written to logs.
 export async function sendPasswordResetEmail(to: string, resetLink: string) {
   const t = getTransporter();
   if (!t) {
-    console.log(`[emailService] SMTP not configured — password reset link for ${to}:\n  ${resetLink}`);
+    console.warn('[emailService] SMTP not configured — password reset email was not sent.');
     return;
   }
 

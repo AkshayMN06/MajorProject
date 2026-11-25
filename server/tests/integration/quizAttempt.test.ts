@@ -12,6 +12,7 @@ let attempts: any[] = [];
 let attemptIdCounter = 0;
 
 const mocks = vi.hoisted(() => ({
+  $transaction: vi.fn(),
   question: { findMany: vi.fn() },
   quizAttempt: {
     findUnique: vi.fn(),
@@ -21,11 +22,16 @@ const mocks = vi.hoisted(() => ({
   session: { findUnique: vi.fn() },
 }));
 
+const transaction = vi.hoisted(() => ({
+  quizAttempt: { updateMany: vi.fn() },
+  quizResponse: { deleteMany: vi.fn(), createMany: vi.fn() },
+}));
+
 vi.mock('@prisma/client', () => ({
   PrismaClient: vi.fn(() => mocks),
 }));
 
-import { getOrStartAttempt } from '../../src/services/quizEngine';
+import { getOrStartAttempt, submitAttempt } from '../../src/services/quizEngine';
 
 function fakeQuestionPool(count: number, moduleTag: string, difficulty: string) {
   return Array.from({ length: count }, (_, i) => ({
@@ -169,5 +175,54 @@ describe('Quiz attempt lifecycle — per-session, never account-level', () => {
     const pre = await getOrStartAttempt('user-2', 'session-1', 'PRE');
     expect(pre.status).toBe('in_progress');
     expect(pre.questionIds).toHaveLength(8);
+  });
+});
+
+describe('quiz attempt submission', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.quizAttempt.findUnique.mockResolvedValue({
+      userId: 'user-1',
+      status: 'in_progress',
+      questionIds: ['q1', 'q2'],
+      totalQuestions: 2,
+    });
+    mocks.question.findMany.mockResolvedValue([{ id: 'q1', correctOption: 'A' }]);
+    mocks.$transaction.mockImplementation((write) => write(transaction));
+    transaction.quizAttempt.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('scores only assigned answers once, keeps the attempt total, and replaces incomplete rows', async () => {
+    await expect(submitAttempt('attempt-1', 'user-1', [
+      { questionId: 'q1', selectedOption: 'B' },
+      { questionId: 'q1', selectedOption: 'A' },
+      { questionId: 'unassigned', selectedOption: 'A' },
+    ])).resolves.toEqual({ attemptId: 'attempt-1', score: 1, totalQuestions: 2 });
+    expect(mocks.question.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['q1'] } },
+      select: { id: true, correctOption: true },
+    });
+    expect(transaction.quizAttempt.updateMany).toHaveBeenCalledWith({
+      where: { id: 'attempt-1', userId: 'user-1', status: 'in_progress' },
+      data: { status: 'completed', score: 1, completedAt: expect.any(Date) },
+    });
+    expect(transaction.quizResponse.deleteMany).toHaveBeenCalledWith({ where: { attemptId: 'attempt-1' } });
+    expect(transaction.quizResponse.createMany).toHaveBeenCalledWith({
+      data: [{ attemptId: 'attempt-1', questionId: 'q1', selectedOption: 'A', isCorrect: true }],
+    });
+  });
+
+  it('leaves committed responses unchanged after a concurrent submit wins', async () => {
+    transaction.quizAttempt.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(submitAttempt('attempt-1', 'user-1', [{ questionId: 'q1', selectedOption: 'A' }]))
+      .rejects.toMatchObject({ status: 400 });
+    expect(transaction.quizResponse.deleteMany).not.toHaveBeenCalled();
+    expect(transaction.quizResponse.createMany).not.toHaveBeenCalled();
+  });
+
+  it('does not submit another learner’s attempt', async () => {
+    await expect(submitAttempt('attempt-1', 'user-2', [{ questionId: 'q1', selectedOption: 'A' }]))
+      .rejects.toMatchObject({ status: 403 });
+    expect(mocks.$transaction).not.toHaveBeenCalled();
   });
 });

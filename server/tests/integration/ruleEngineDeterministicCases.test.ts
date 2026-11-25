@@ -10,7 +10,8 @@ const mocks = vi.hoisted(() => ({
   event: { count: vi.fn(), create: vi.fn() },
   attempt: { create: vi.fn(), findMany: vi.fn(), count: vi.fn() },
   score: { create: vi.fn() },
-  analytics: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
+  analytics: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), findUniqueOrThrow: vi.fn() },
+  $executeRaw: vi.fn(),
 }));
 
 vi.mock('@prisma/client', () => ({

@@ -6,12 +6,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // (including the new `caseStudy` field), and submitSession's
 // ownership/resubmit/stray-id error behavior.
 const mocks = vi.hoisted(() => ({
+  $transaction: vi.fn(),
   scenario: { findMany: vi.fn() },
   caseStudy: { findMany: vi.fn() },
   practiceQuestionPool: { findMany: vi.fn() },
   practiceQuestion: { findMany: vi.fn() },
-  practiceSession: { create: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-  practiceResponse: { createMany: vi.fn() },
+  practiceSession: { create: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
+  practiceResponse: { createMany: vi.fn(), deleteMany: vi.fn() },
 }));
 
 vi.mock('@prisma/client', () => ({
@@ -39,6 +40,7 @@ function fakeQuestion(id: string, poolId: string, correctOption: 'A' | 'B' | 'C'
 describe('practice session response contract', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.$transaction.mockImplementation((write) => write(mocks));
     mocks.scenario.findMany.mockResolvedValue([{ category: 'Web Security' }]);
   });
 
@@ -117,7 +119,7 @@ describe('practice session response contract', () => {
       mocks.practiceSession.findUnique.mockResolvedValue(mockSessionRow());
       mocks.practiceQuestion.findMany.mockResolvedValue(sessionQuestions);
       mocks.practiceResponse.createMany.mockResolvedValue({ count: 1 });
-      mocks.practiceSession.update.mockResolvedValue({});
+      mocks.practiceSession.updateMany.mockResolvedValue({ count: 1 });
 
       const result = await submitSession('session-1', 'user-1', [
         { questionId: 'q0', selectedOption: 'A' },
@@ -134,7 +136,7 @@ describe('practice session response contract', () => {
       mocks.practiceSession.findUnique.mockResolvedValue(mockSessionRow());
       mocks.practiceQuestion.findMany.mockResolvedValue(sessionQuestions);
       mocks.practiceResponse.createMany.mockResolvedValue({ count: 8 });
-      mocks.practiceSession.update.mockResolvedValue({});
+      mocks.practiceSession.updateMany.mockResolvedValue({ count: 1 });
 
       const responses = sessionQuestionIds.map((id) => ({ questionId: id, selectedOption: 'A' as const }));
       const result = await submitSession('session-1', 'user-1', responses);

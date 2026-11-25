@@ -1,8 +1,10 @@
 import axios from 'axios';
 
-// Base API URL is proxied via Vite
+// Local development uses the Vite proxy. Hosted clients connect directly to the backend.
+export const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN?.trim().replace(/\/+$/, '') ?? '';
+
 const apiClient = axios.create({
-  baseURL: '/api',
+  baseURL: `${backendOrigin}/api`,
   timeout: 10000,
 });
 
@@ -115,10 +117,22 @@ export const analyticsApi = {
 };
 
 // --- Recommendations API ---
+export interface Recommendation {
+  id: string;
+  userId: string;
+  type: string;
+  title: string;
+  description: string;
+  moduleId: string | null;
+  priority: number;
+  isCompleted: boolean;
+  createdAt: string;
+}
+
 export const recommendationApi = {
-  get: () => unwrap<any>(apiClient.get('/recommendations')),
-  generate: () => unwrap<any>(apiClient.post('/recommendations/generate')),
-  markComplete: (id: string) => unwrap<any>(apiClient.patch(`/recommendations/${id}/complete`)),
+  get: () => unwrap<Recommendation[]>(apiClient.get('/recommendations')),
+  generate: () => unwrap<Recommendation[]>(apiClient.post('/recommendations/generate')),
+  markComplete: (id: string) => unwrap<Recommendation>(apiClient.patch(`/recommendations/${id}/complete`)),
 };
 
 // --- Modules API ---
@@ -134,6 +148,19 @@ export interface ModuleSummary {
   order: number;
   lessonCount: number;
   completedLessonCount: number;
+  thumbnailUrl?: string | null;
+  isCustom?: boolean;
+  fileCount?: number;
+}
+
+// Uploaded learning material as students see it (published modules only).
+export interface ModuleMaterial {
+  id: string;
+  originalFileName: string;
+  fileType: 'pdf' | 'docx' | 'pptx' | 'txt';
+  fileSize: number;
+  extractedText: string | null;
+  processingStatus: 'EXTRACTED' | 'NO_TEXT';
 }
 
 export interface ModuleLesson {
@@ -148,6 +175,21 @@ export interface ModuleLesson {
 
 export interface ModuleDetail extends Omit<ModuleSummary, 'lessonCount' | 'completedLessonCount'> {
   lessons: ModuleLesson[];
+  learningObjectives?: string | null;
+  referenceMaterials?: string | null;
+  tags?: string[];
+  authorName?: string | null;
+  files?: ModuleMaterial[];
+}
+
+// Saves a blob response as a file (authorized downloads can't be plain links).
+export function saveBlob(data: Blob, fileName: string) {
+  const url = URL.createObjectURL(data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export const moduleApi = {
@@ -155,6 +197,121 @@ export const moduleApi = {
   getById: (id: string) => unwrap<ModuleDetail>(apiClient.get(`/modules/${id}`)),
   completeLesson: (moduleId: string, lessonId: string) =>
     unwrap<{ success: true }>(apiClient.post(`/modules/${moduleId}/lessons/${lessonId}/complete`)),
+  downloadFile: (moduleId: string, fileId: string) =>
+    apiClient.get(`/modules/${moduleId}/files/${fileId}/download`, { responseType: 'blob', timeout: 60000 }),
+};
+
+// --- Module Management (teachers and admins) ---
+export type ModuleStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+
+export interface ManagedModule {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  difficulty: string; // 'Easy' | 'Medium' | 'Hard'
+  duration: number;
+  status: ModuleStatus;
+  isPredefined: boolean;
+  canManage: boolean;
+  createdBy: { id: string; name: string } | null;
+  createdAt: string;
+  updatedAt: string;
+  publishedAt: string | null;
+  deletedAt: string | null;
+  fileCount: number;
+  lessonCount: number;
+  learnerCount: number;
+  visibleToStudents: boolean;
+}
+
+export interface ManagedModuleFile extends ModuleMaterial {
+  mimeType: string;
+  processingNote: string | null;
+  uploadedAt: string;
+}
+
+export interface ManagedModuleDetail extends ManagedModule {
+  learningObjectives: string | null;
+  content: string | null; // null for predefined modules (multi-lesson curriculum)
+  thumbnailUrl: string | null;
+  tags: string[];
+  referenceMaterials: string | null;
+  files: ManagedModuleFile[];
+}
+
+export interface ModuleFormInput {
+  title: string;
+  description: string;
+  category: string;
+  difficulty: 'Beginner' | 'Intermediate' | 'Advanced';
+  learningObjectives: string;
+  content: string;
+  thumbnailUrl?: string;
+  estimatedTime?: number;
+  tags?: string[];
+  referenceMaterials?: string;
+}
+
+export interface UploadResult {
+  accepted: ManagedModuleFile[];
+  rejected: { originalFileName: string; error: string }[];
+}
+
+// Errors from these endpoints may carry `details` (e.g. why publishing is blocked).
+let uploadConfig: Promise<{ direct: boolean }> | null = null;
+export const adminModuleApi = {
+  list: () => unwrap<ManagedModule[]>(apiClient.get('/admin/modules')),
+  get: (id: string) => unwrap<ManagedModuleDetail>(apiClient.get(`/admin/modules/${id}`)),
+  // Returns the whole body: a create-and-publish that can't publish yet still
+  // saves a draft and explains why in `warnings`.
+  create: async (input: ModuleFormInput & { publish?: boolean }): Promise<{ data: ManagedModuleDetail; warnings?: string[] }> => {
+    let warnings: string[] | undefined;
+    const data = await unwrap<ManagedModuleDetail>(apiClient.post('/admin/modules', input).then((r) => { warnings = r.data.warnings; return r; }));
+    return { data, warnings };
+  },
+  update: (id: string, input: ModuleFormInput) => unwrap<ManagedModuleDetail>(apiClient.put(`/admin/modules/${id}`, input)),
+  publish: (id: string) => unwrap<ManagedModuleDetail>(apiClient.patch(`/admin/modules/${id}/publish`)),
+  unpublish: (id: string) => unwrap<ManagedModuleDetail>(apiClient.patch(`/admin/modules/${id}/unpublish`)),
+  archive: (id: string, confirmName: string) => unwrap<ManagedModuleDetail>(apiClient.delete(`/admin/modules/${id}`, { data: { confirmName } })),
+  // Partial success is normal (some files accepted, some rejected), and a
+  // 422 still carries the per-file reasons, so both are returned as data.
+  // When the server keeps originals in object storage (Vercel + Supabase),
+  // files go straight to signed storage URLs — bypassing the hosting
+  // platform's request-size limit — and the server then processes them.
+  upload: async (id: string, files: File[]): Promise<UploadResult> => {
+    const keep422 = (err: any) => {
+      if (err.response?.status === 422 && err.response.data?.data) return err.response.data.data as UploadResult;
+      return unwrap<UploadResult>(Promise.reject(err));
+    };
+    uploadConfig ??= unwrap<{ direct: boolean }>(apiClient.get('/admin/modules/upload-config')).catch((err) => { uploadConfig = null; throw err; });
+    if (!(await uploadConfig).direct) {
+      const form = new FormData();
+      files.forEach((f) => form.append('files', f));
+      return apiClient.post(`/admin/modules/${id}/upload`, form, { timeout: 120000 }).then((r) => r.data.data as UploadResult).catch(keep422);
+    }
+
+    const { targets, rejected } = await unwrap<{ targets: { uploadId: string; signedUrl: string; index: number }[]; rejected: UploadResult['rejected'] }>(
+      apiClient.post(`/admin/modules/${id}/upload-urls`, { files: files.map((f) => ({ name: f.name, type: f.type, size: f.size })) })
+    );
+    const uploaded: { uploadId: string; name: string; type: string }[] = [];
+    for (const t of targets) {
+      const file = files[t.index];
+      if (!file) continue;
+      const put = await fetch(t.signedUrl, { method: 'PUT', headers: { 'content-type': file.type, 'x-upsert': 'false' }, body: file }).catch(() => null);
+      if (put?.ok) uploaded.push({ uploadId: t.uploadId, name: file.name, type: file.type });
+      else rejected.push({ originalFileName: file.name, error: 'The file could not be uploaded to storage. Try again.' });
+    }
+    if (uploaded.length === 0) return { accepted: [], rejected };
+    const done = await apiClient
+      .post(`/admin/modules/${id}/upload-complete`, { uploads: uploaded }, { timeout: 120000 })
+      .then((r) => r.data.data as UploadResult)
+      .catch(keep422);
+    return { accepted: done.accepted, rejected: [...rejected, ...done.rejected] };
+  },
+  removeFile: (id: string, fileId: string) => unwrap<unknown>(apiClient.delete(`/admin/modules/${id}/files/${fileId}`)),
+  downloadFile: (id: string, fileId: string) =>
+    apiClient.get(`/admin/modules/${id}/files/${fileId}/download`, { responseType: 'blob', timeout: 60000 }),
 };
 
 // --- Labs API ---

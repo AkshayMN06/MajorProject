@@ -190,12 +190,16 @@ export async function submitSession(sessionId: string, userId: string, responses
     });
   }
 
-  if (responseRows.length > 0) {
-    await prisma.practiceResponse.createMany({ data: responseRows });
-  }
-  await prisma.practiceSession.update({
-    where: { id: sessionId },
-    data: { status: 'completed', score, completedAt: new Date() },
+  await prisma.$transaction(async (tx) => {
+    const result = await tx.practiceSession.updateMany({
+      where: { id: sessionId, userId, status: 'in_progress' },
+      data: { status: 'completed', score, completedAt: new Date() },
+    });
+    if (result.count === 0) throw httpError(400, 'This practice session was already submitted');
+
+    // Replace any incomplete response rows left by an older failed submission.
+    await tx.practiceResponse.deleteMany({ where: { sessionId } });
+    if (responseRows.length > 0) await tx.practiceResponse.createMany({ data: responseRows });
   });
 
   return {

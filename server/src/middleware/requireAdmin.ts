@@ -12,3 +12,13 @@ export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction
   }
   next();
 }
+
+// Module Management is open to teachers as well as admins; every other
+// /api/admin route stays behind requireAdmin above.
+export function requireModuleManager(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (req.user?.role !== 'ADMIN' && req.user?.role !== 'TEACHER') {
+    res.status(403).json({ success: false, error: 'Forbidden: teacher or admin access required' });
+    return;
+  }
+  next();
+}

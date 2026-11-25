@@ -10,6 +10,7 @@ import { validate } from '../middleware/validate';
 import { forgotPasswordSchema, resetPasswordSchema } from '../validation/authSchemas';
 import { logSecurityEvent } from '../services/securityEventLogger';
 import { sendPasswordResetEmail } from '../services/emailService';
+import { consumeResetToken } from '../services/passwordReset';
 
 const prisma = new PrismaClient();
 const router = Router();
@@ -176,24 +177,14 @@ router.post('/reset-password', authLimiter, validate(resetPasswordSchema), async
     const { token, newPassword } = req.body;
     const tokenHash = hashToken(token);
 
-    const resetToken = await prisma.passwordResetToken.findUnique({ where: { tokenHash } });
-    if (!resetToken || resetToken.usedAt || resetToken.expiresAt.getTime() < Date.now()) {
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const userId = await consumeResetToken(prisma, tokenHash, hashedPassword);
+    if (!userId) {
       return res.status(400).json({ success: false, error: 'This reset link is invalid or has expired.' });
     }
 
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    await prisma.$transaction([
-      prisma.user.update({ where: { id: resetToken.userId }, data: { password: hashedPassword, failedLoginCount: 0, lockedUntil: null } }),
-      prisma.passwordResetToken.update({ where: { id: resetToken.id }, data: { usedAt: new Date() } }),
-      // Invalidate any other outstanding tokens for this user.
-      prisma.passwordResetToken.updateMany({
-        where: { userId: resetToken.userId, usedAt: null, id: { not: resetToken.id } },
-        data: { usedAt: new Date() },
-      }),
-    ]);
-
-    const user = await prisma.user.findUnique({ where: { id: resetToken.userId } });
-    await logSecurityEvent({ userId: resetToken.userId, email: user?.email, type: 'PASSWORD_RESET_COMPLETED', req });
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    await logSecurityEvent({ userId, email: user?.email, type: 'PASSWORD_RESET_COMPLETED', req });
 
     res.json({ success: true, message: 'Password reset successfully.' });
   } catch (err: any) {

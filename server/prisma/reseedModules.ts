@@ -1,8 +1,8 @@
-// Regenerates the `modules`/`lessons` tables from moduleData.ts's real
-// curriculum content, replacing the placeholder "Cyber Security Module N"
-// seed data. Wipes LessonProgress too (it references lessonId, and old
-// lesson ids won't exist after this runs) — never touches scenarios,
-// sessions, or any gameplay/assessment history.
+// Regenerates the predefined curriculum (modules with origin = BUILTIN)
+// from moduleData.ts. Wipes LessonProgress for those predefined lessons only
+// (old lesson ids won't exist after this runs). Teacher/admin-authored
+// modules, their files and learners' progress on them are left untouched,
+// as are scenarios, sessions and all gameplay/assessment history.
 import { PrismaClient } from '@prisma/client';
 import { MODULES } from './moduleData';
 
@@ -11,15 +11,19 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('Reseeding modules/lessons...');
 
-  await prisma.lessonProgress.deleteMany();
-  await prisma.lesson.deleteMany();
-  await prisma.module.deleteMany();
+  // Keyed on origin, not createdById: an authored module whose author was
+  // deleted has a null creator but must never be treated as curriculum.
+  const builtin = { module: { origin: 'BUILTIN' } };
+  await prisma.lessonProgress.deleteMany({ where: { lesson: builtin } });
+  await prisma.lesson.deleteMany({ where: builtin });
+  await prisma.module.deleteMany({ where: { origin: 'BUILTIN' } });
 
   let totalLessons = 0;
   for (const m of MODULES) {
     const created = await prisma.module.create({
       data: {
         name: m.name,
+        activeTitleKey: m.name.replace(/^ +| +$/g, '').replace(/[A-Z]/g, (c) => c.toLowerCase()), // = SQLite lower(trim(name)), as in module management
         description: m.description,
         category: m.category,
         difficulty: m.difficulty,

@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { z } from 'zod';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { AnalyticsEngine } from '../services/analyticsEngine';
 import { buildUserDeletionOps } from '../services/userDeletion';
@@ -10,68 +11,60 @@ const router = Router();
 
 router.use(authenticate);
 
-// GET /api/users/:id — get user by ID
+const profileUpdate = z.object({
+  name: z.string().optional(),
+  usn: z.string().nullable().optional(),
+  department: z.string().nullable().optional(),
+  semester: z.number().int().nullable().optional(),
+  college: z.string().nullable().optional(),
+  avatar: z.string().nullable().optional(),
+  bio: z.string().nullable().optional(),
+  phone: z.string().nullable().optional(),
+  location: z.string().nullable().optional(),
+  preferredRole: z.string().nullable().optional(),
+  timezone: z.string().nullable().optional(),
+}).strict();
+
 router.get('/:id', async (req: AuthRequest, res: Response) => {
+  if (req.user.id !== req.params.id && req.user.role !== 'ADMIN') {
+    return res.status(403).json({ success: false, error: 'Forbidden' });
+  }
   try {
     const user = await prisma.user.findUnique({ where: { id: String(req.params.id) } });
     if (!user) return res.status(404).json({ success: false, error: 'User not found' });
-    const { password, ...userWithoutPass } = user;
-    res.json({ success: true, data: userWithoutPass });
+    const { password, failedLoginCount, lockedUntil, ...profile } = user;
+    res.json({ success: true, data: profile });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// PUT /api/users/me — update the authenticated user's own profile
-router.put('/me', async (req: AuthRequest, res: Response) => {
+async function updateProfile(req: AuthRequest, res: Response) {
+  const data = profileUpdate.safeParse(req.body);
+  if (!data.success) {
+    return res.status(400).json({ success: false, error: 'Invalid profile fields' });
+  }
   try {
-    if (!req.user) return res.status(401).json({ success: false, error: 'Unauthorized' });
-
-    const updateData = { ...req.body };
-    // Strip fields that must never be updated via this endpoint
-    delete updateData.password;
-    delete updateData.id;
-    delete updateData.email;
-    delete updateData.createdAt;
-    delete updateData.updatedAt;
-
-    const user = await prisma.user.update({
-      where: { id: req.user.id },
-      data: updateData,
-    });
-
-    const { password, ...userWithoutPass } = user;
-    res.json({ success: true, data: userWithoutPass });
+    const user = await prisma.user.update({ where: { id: req.user.id }, data: data.data });
+    const { password, failedLoginCount, lockedUntil, ...profile } = user;
+    res.json({ success: true, data: profile });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
-});
+}
 
-// PUT /api/users/:id — update user profile fields
-router.put('/:id', async (req: AuthRequest, res: Response) => {
-  try {
-    if (req.user.id !== req.params.id) {
-      return res.status(403).json({ success: false, error: 'Forbidden' });
-    }
-    const updateData = { ...req.body };
-    delete updateData.password;
-    delete updateData.id;
-    delete updateData.email;
-
-    const user = await prisma.user.update({
-      where: { id: String(req.params.id) },
-      data: updateData
-    });
-    
-    const { password, ...userWithoutPass } = user;
-    res.json({ success: true, data: userWithoutPass });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+router.put('/me', updateProfile);
+router.put('/:id', (req: AuthRequest, res: Response) => {
+  if (req.user.id !== req.params.id) {
+    return res.status(403).json({ success: false, error: 'Forbidden' });
   }
+  return updateProfile(req, res);
 });
 
-// GET /api/users/:id/stats — get user analytics summary
 router.get('/:id/stats', async (req: AuthRequest, res: Response) => {
+  if (req.user.id !== req.params.id && req.user.role !== 'ADMIN') {
+    return res.status(403).json({ success: false, error: 'Forbidden' });
+  }
   try {
     const summary = await AnalyticsEngine.getAnalyticsSummary(String(req.params.id));
     res.json({ success: true, data: summary });

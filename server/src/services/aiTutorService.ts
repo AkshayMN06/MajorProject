@@ -44,6 +44,19 @@ async function buildKnowledgeBase(): Promise<KnowledgeEntry[]> {
   }
 
   const scenarios = await prisma.scenario.findMany({ orderBy: { category: 'asc' } });
+  const defendedRules = scenarios.length > 0
+    ? await prisma.rule.findMany({
+        where: { scenarioId: { in: scenarios.map((scenario) => scenario.id) }, outcome: 'defended' },
+        select: { scenarioId: true, attackType: true, defenseType: true },
+        orderBy: [{ scenarioId: 'asc' }, { attackType: 'asc' }, { defenseType: 'asc' }],
+      })
+    : [];
+  const rulesByScenario = new Map<string, typeof defendedRules>();
+  for (const rule of defendedRules) {
+    const rules = rulesByScenario.get(rule.scenarioId);
+    if (rules) rules.push(rule);
+    else rulesByScenario.set(rule.scenarioId, [rule]);
+  }
 
   const attackBlurbs = new Map<string, string[]>();
   const defenseBlurbs = new Map<string, string[]>();
@@ -51,10 +64,10 @@ async function buildKnowledgeBase(): Promise<KnowledgeEntry[]> {
   for (const s of scenarios) {
     const attacks = (s.attackOptions as any[]) ?? [];
     const defenses = (s.defenseOptions as any[]) ?? [];
-    const rules = await prisma.rule.findMany({ where: { scenarioId: s.id } });
+    const rules = rulesByScenario.get(s.id) ?? [];
 
     for (const a of attacks) {
-      const winningRule = rules.find((r) => r.attackType === a.id && r.outcome === 'defended');
+      const winningRule = rules.find((r) => r.attackType === a.id);
       const defenseName = winningRule ? defenses.find((d) => d.id === winningRule.defenseType)?.name : null;
       const blurb =
         `In the "${s.name}" scenario (${s.category}): **${a.name}** — ${a.description} (difficulty: ${a.difficulty}).` +
@@ -66,7 +79,7 @@ async function buildKnowledgeBase(): Promise<KnowledgeEntry[]> {
 
     for (const d of defenses) {
       const stoppedAttacks = rules
-        .filter((r) => r.defenseType === d.id && r.outcome === 'defended')
+        .filter((r) => r.defenseType === d.id)
         .map((r) => attacks.find((a) => a.id === r.attackType)?.name)
         .filter((name): name is string => Boolean(name));
       const blurb =

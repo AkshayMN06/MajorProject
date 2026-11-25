@@ -6,7 +6,9 @@ import { Loader2 } from 'lucide-react';
 // Frontend-side gate only — defense in depth. Every /api/admin/* endpoint
 // independently re-checks the role server-side (requireAdmin middleware),
 // so this component existing/being bypassed can never expose real data.
-export const AdminRoute = ({ children }: { children?: React.ReactNode }) => {
+// `roles` widens the gate for pages other roles may use (Module Management
+// is open to teachers); everything else stays admin-only by default.
+export const AdminRoute = ({ children, roles = ['ADMIN'] }: { children?: React.ReactNode; roles?: string[] }) => {
   const { user, isLoading } = useAuthStore();
 
   // Treat "user not yet loaded" the same as "loading" — avoids a flash
@@ -19,7 +21,7 @@ export const AdminRoute = ({ children }: { children?: React.ReactNode }) => {
     );
   }
 
-  if (user.role !== 'ADMIN') {
+  if (!roles.includes(user.role ?? 'USER')) {
     return <Navigate to="/" replace />;
   }
 

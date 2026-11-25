@@ -27,7 +27,8 @@ router.post('/generate', async (req: AuthRequest, res: Response) => {
 
 router.patch('/:id/complete', async (req: AuthRequest, res: Response) => {
   try {
-    const data = await RecommendationEngine.markCompleted(String(req.params.id));
+    const data = await RecommendationEngine.markCompleted(String(req.params.id), req.user.id);
+    if (!data) return res.status(404).json({ success: false, error: 'Recommendation not found' });
     res.json({ success: true, data });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

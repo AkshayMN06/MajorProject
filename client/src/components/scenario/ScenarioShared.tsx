@@ -2,9 +2,9 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import {
   Target, Shield, Check,
-  AlertTriangle, Clock, Zap, Lock, BadgeCheck
+  AlertTriangle, Clock, Zap, Lock, BadgeCheck, User, Users
 } from 'lucide-react';
-import type { Scenario, AttackOption, DefenseOption } from '../../hooks/useScenarioSession';
+import type { Scenario, AttackOption, DefenseOption, AssessmentMode } from '../../hooks/useScenarioSession';
 
 // ─── Strategy Card (shared for attack & defense) ──────────────────────────────
 
@@ -263,6 +263,25 @@ export const OutcomeBadge: React.FC<{ outcome: string }> = ({ outcome }) => {
     <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-semibold border ${cfg.cls}`}>
       {outcome === 'defended' ? <BadgeCheck size={14} /> : outcome === 'breached' ? <AlertTriangle size={14} /> : <Clock size={14} />}
       {cfg.label}
+    </span>
+  );
+};
+
+// ─── Mode Badge ───────────────────────────────────────────────────────────────
+
+// Labels the assessment as Collaborative (two students) or Individual
+// (against the system). Renders nothing when the mode isn't known.
+export const ModeBadge: React.FC<{ mode: AssessmentMode | null | undefined }> = ({ mode }) => {
+  if (!mode) return null;
+  const individual = mode === 'individual';
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-semibold rounded border tracking-wider ${
+        individual ? 'border-indigo-500/30 text-indigo-300 bg-indigo-500/10' : 'border-blue-500/30 text-blue-300 bg-blue-500/10'
+      }`}
+    >
+      {individual ? <User size={12} aria-hidden="true" /> : <Users size={12} aria-hidden="true" />}
+      {individual ? 'INDIVIDUAL' : 'COLLABORATIVE'}
     </span>
   );
 };

@@ -3,9 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, ArrowRight, Loader2, AlertTriangle, CheckCircle2,
-  BookOpen, Layers, HelpCircle, Check, X as XIcon,
+  BookOpen, Layers, HelpCircle, Check, X as XIcon, FileText, Download, ChevronDown, Target,
 } from 'lucide-react';
-import { moduleApi, type ModuleDetail, type ModuleLesson } from '../services/api';
+import { moduleApi, saveBlob, type ModuleDetail, type ModuleLesson, type ModuleMaterial } from '../services/api';
+import { formatInline } from '../utils/formatInline';
 
 interface InteractiveContent {
   steps: { title: string; body: string }[];
@@ -54,11 +55,6 @@ const TheoryContent: React.FC<{ text: string }> = ({ text }) => {
   );
 };
 
-// Bold-only inline formatting (**text**) — the only inline markdown used
-// in moduleData.ts theory content.
-function formatInline(s: string): string {
-  return s.replace(/\*\*(.+?)\*\*/g, '<strong class="text-white">$1</strong>');
-}
 
 const InteractiveLesson: React.FC<{ content: InteractiveContent; onFinish: () => void }> = ({ content, onFinish }) => {
   const [step, setStep] = useState(0);
@@ -241,7 +237,12 @@ export const LessonPage: React.FC = () => {
   };
 
   const renderBody = () => {
-    if (lesson.type === 'theory') return <TheoryContent text={lesson.content} />;
+    if (lesson.type === 'theory') {
+      if (!lesson.content.trim() && mod.files?.length) {
+        return <p className="text-sm text-gray-400">This module's learning material is in the documents below.</p>;
+      }
+      return <TheoryContent text={lesson.content} />;
+    }
     if (lesson.type === 'interactive') {
       let parsed: InteractiveContent;
       try { parsed = JSON.parse(lesson.content); } catch { return <p className="text-red-400 text-sm">Could not load this lesson's content.</p>; }
@@ -308,7 +309,80 @@ export const LessonPage: React.FC = () => {
             )}
           </motion.div>
         </div>
+
+        {mod.isCustom && <ModuleExtras mod={mod} />}
       </div>
+    </div>
+  );
+};
+
+const fileSize = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+// Teacher-authored modules: objectives, references and the uploaded
+// learning materials (extracted text inline, original file downloadable).
+const ModuleExtras: React.FC<{ mod: ModuleDetail }> = ({ mod }) => (
+  <div className="mt-8 space-y-6">
+    {mod.learningObjectives && (
+      <section className="glass-card border border-cyber-border bg-white/5 rounded-2xl p-6">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-white mb-3"><Target size={15} className="text-indigo-400" /> Learning objectives</h3>
+        <TheoryContent text={mod.learningObjectives} />
+      </section>
+    )}
+    {!!mod.files?.length && (
+      <section className="glass-card border border-cyber-border bg-white/5 rounded-2xl p-6">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-white mb-4"><FileText size={15} className="text-indigo-400" /> Learning materials</h3>
+        <div className="space-y-3">
+          {mod.files.map((f) => <MaterialItem key={f.id} moduleId={mod.id} file={f} />)}
+        </div>
+      </section>
+    )}
+    {mod.referenceMaterials && (
+      <section className="glass-card border border-cyber-border bg-white/5 rounded-2xl p-6">
+        <h3 className="text-sm font-semibold text-white mb-3">References</h3>
+        <TheoryContent text={mod.referenceMaterials} />
+      </section>
+    )}
+    {mod.authorName && <p className="text-xs text-gray-600">Module by {mod.authorName}</p>}
+  </div>
+);
+
+const MaterialItem: React.FC<{ moduleId: string; file: ModuleMaterial }> = ({ moduleId, file }) => {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const download = async () => {
+    setBusy(true);
+    setFailed(false);
+    try {
+      const res = await moduleApi.downloadFile(moduleId, file.id);
+      saveBlob(res.data, file.originalFileName);
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="border border-cyber-border rounded-xl">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border border-indigo-500/30 text-indigo-300 bg-indigo-500/10">{file.fileType}</span>
+        <span className="flex-1 min-w-0 truncate text-sm text-gray-200" title={file.originalFileName}>{file.originalFileName}</span>
+        <span className="text-xs text-gray-500 hidden sm:inline">{fileSize(file.fileSize)}</span>
+        {file.extractedText && (
+          <button onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex items-center gap-1 text-xs text-indigo-300 hover:text-indigo-200">
+            {open ? 'Hide' : 'Read'} <ChevronDown size={13} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
+          </button>
+        )}
+        <button onClick={download} disabled={busy} aria-label={`Download ${file.originalFileName}`} className="flex items-center gap-1 text-xs text-gray-300 hover:text-white disabled:opacity-50">
+          {busy ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} Download
+        </button>
+      </div>
+      {failed && <p className="px-4 pb-3 text-xs text-red-400">The file could not be downloaded. Please try again.</p>}
+      {open && file.extractedText && (
+        <div className="border-t border-cyber-border px-4 py-4 max-h-[28rem] overflow-y-auto">
+          <TheoryContent text={file.extractedText} />
+        </div>
+      )}
     </div>
   );
 };

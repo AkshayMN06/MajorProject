@@ -1,43 +1,33 @@
-import { PrismaClient } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { buildAssessmentReport } from './reportBuilder';
 
 const prisma = new PrismaClient();
 
 export class AnalyticsEngine {
-  static async updateAnalytics(userId: string, category: string, isCorrect: boolean, timeTaken: number) {
-    const existing = await prisma.analytics.findFirst({
-      where: { userId, category },
-    });
-
-    if (existing) {
-      const totalAttempts = existing.totalAttempts + 1;
-      const correctAttempts = existing.correctAttempts + (isCorrect ? 1 : 0);
-      const accuracy = (correctAttempts / totalAttempts) * 100;
-      const averageTime = ((existing.averageTime * existing.totalAttempts) + timeTaken) / totalAttempts;
-
-      return prisma.analytics.update({
-        where: { id: existing.id },
-        data: {
-          totalAttempts,
-          correctAttempts,
-          accuracy,
-          averageTime,
-          lastUpdated: new Date(),
-        },
-      });
-    } else {
-      return prisma.analytics.create({
-        data: {
-          userId,
-          category,
-          totalAttempts: 1,
-          correctAttempts: isCorrect ? 1 : 0,
-          accuracy: isCorrect ? 100 : 0,
-          averageTime: timeTaken,
-          lastUpdated: new Date(),
-        },
-      });
-    }
+  /**
+   * Adds one attempt to the learner's per-category aggregate in a single
+   * atomic statement: insert the first row, or fold the attempt into the
+   * existing one (unique on userId+category). The database evaluates every SET
+   * expression against the pre-update row, so count, accuracy and weighted
+   * average time always come from the same snapshot — no read-modify-write
+   * window, whether or not the caller is inside a transaction. (PostgreSQL
+   * evaluates SET expressions against the existing row, and the conflicting
+   * row is locked for the update.)
+   */
+  static async updateAnalytics(userId: string, category: string, isCorrect: boolean, timeTaken: number, db: Prisma.TransactionClient = prisma) {
+    const correct = isCorrect ? 1 : 0;
+    const now = new Date();
+    await db.$executeRaw`
+      INSERT INTO "analytics" AS a ("id", "userId", "category", "totalAttempts", "correctAttempts", "averageTime", "accuracy", "lastUpdated")
+      VALUES (${randomUUID()}, ${userId}, ${category}, 1, ${correct}, ${timeTaken}, ${correct * 100.0}, ${now})
+      ON CONFLICT ("userId", "category") DO UPDATE SET
+        "averageTime"     = (a."averageTime" * a."totalAttempts" + excluded."averageTime") / (a."totalAttempts" + 1),
+        "accuracy"        = (a."correctAttempts" + excluded."correctAttempts") * 100.0 / (a."totalAttempts" + 1),
+        "correctAttempts" = a."correctAttempts" + excluded."correctAttempts",
+        "totalAttempts"   = a."totalAttempts" + 1,
+        "lastUpdated"     = excluded."lastUpdated"`;
+    return db.analytics.findUniqueOrThrow({ where: { userId_category: { userId, category } } });
   }
 
   /**
@@ -50,11 +40,11 @@ export class AnalyticsEngine {
    * Reuses buildAssessmentReport() (the same source of truth as the on-screen
    * report) for scoring, rather than recomputing it here.
    */
-  static async recordAssessmentCompletion(sessionId: string) {
-    const session = await prisma.session.findUnique({ where: { id: sessionId } });
+  static async recordAssessmentCompletion(sessionId: string, db: Prisma.TransactionClient = prisma) {
+    const session = await db.session.findUnique({ where: { id: sessionId } });
     if (!session) return;
 
-    const report = await buildAssessmentReport(sessionId);
+    const report = await buildAssessmentReport(sessionId, db);
     if (!report) return;
 
     // In SOLO mode attackerId === defenderId (the same human occupies both
@@ -78,15 +68,21 @@ export class AnalyticsEngine {
     }
 
     for (const p of participants) {
+      const exists = await db.assessmentSnapshot.findFirst({
+        where: { userId: p.userId, sessionId, role: p.role },
+        select: { id: true },
+      });
+      if (exists) continue;
+
       // Event.timeTaken is always the defender's time (see ruleEngine.ts),
       // so role-specific timing has to come from this participant's own
       // Attempt rows instead.
-      const attempts = await prisma.attempt.findMany({ where: { sessionId, userId: p.userId, role: p.role } });
+      const attempts = await db.attempt.findMany({ where: { sessionId, userId: p.userId, role: p.role } });
       const successOutcome = p.role === 'attacker' ? 'breached' : 'defended';
       const correctRounds = attempts.filter((a) => a.outcome === successOutcome).length;
       const averageTime = attempts.length > 0 ? attempts.reduce((sum, a) => sum + a.timeTaken, 0) / attempts.length : 0;
 
-      await prisma.assessmentSnapshot.create({
+      await db.assessmentSnapshot.create({
         data: {
           userId: p.userId,
           sessionId,
@@ -98,20 +94,21 @@ export class AnalyticsEngine {
           correctRounds,
           incorrectRounds: attempts.length - correctRounds,
           averageTime,
+          completedAt: session.completedAt ?? undefined,
         },
       });
     }
   }
 
-  static async getUserAnalytics(userId: string) {
-    return prisma.analytics.findMany({
+  static async getUserAnalytics(userId: string, db: Prisma.TransactionClient = prisma) {
+    return db.analytics.findMany({
       where: { userId },
     });
   }
 
-  static async getAnalyticsSummary(userId: string) {
-    const analytics = await this.getUserAnalytics(userId);
-    const sessions = await prisma.session.count({
+  static async getAnalyticsSummary(userId: string, db: Prisma.TransactionClient = prisma) {
+    const analytics = await this.getUserAnalytics(userId, db);
+    const sessions = await db.session.count({
       where: {
         OR: [
           { attackerId: userId },
@@ -138,8 +135,8 @@ export class AnalyticsEngine {
     const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
 
     const [thisWeek, lastWeek] = await Promise.all([
-      prisma.assessmentSnapshot.findMany({ where: { userId, completedAt: { gte: oneWeekAgo } } }),
-      prisma.assessmentSnapshot.findMany({ where: { userId, completedAt: { gte: twoWeeksAgo, lt: oneWeekAgo } } }),
+      db.assessmentSnapshot.findMany({ where: { userId, completedAt: { gte: oneWeekAgo } } }),
+      db.assessmentSnapshot.findMany({ where: { userId, completedAt: { gte: twoWeeksAgo, lt: oneWeekAgo } } }),
     ]);
     const avgAccuracy = (rows: { accuracy: number }[]) =>
       rows.length > 0 ? rows.reduce((sum, r) => sum + r.accuracy, 0) / rows.length : null;
@@ -151,15 +148,17 @@ export class AnalyticsEngine {
     // Response-time distribution from recent individual round attempts —
     // the Analytics table only stores a per-category running average, not
     // enough to derive fastest/median/slowest.
-    const recentAttempts = await prisma.attempt.findMany({
+    const recentAttempts = await db.attempt.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
       take: 50,
       select: { timeTaken: true },
     });
     const times = recentAttempts.map((a) => a.timeTaken).sort((a, b) => a - b);
+    const lowerMiddle = Math.floor((times.length - 1) / 2);
+    const upperMiddle = Math.floor(times.length / 2);
     const responseTimeStats = times.length > 0
-      ? { fastest: times[0], median: times[Math.floor(times.length / 2)], slowest: times[times.length - 1] }
+      ? { fastest: times[0], median: (times[lowerMiddle] + times[upperMiddle]) / 2, slowest: times[times.length - 1] }
       : null;
 
     return {
@@ -204,8 +203,8 @@ export class AnalyticsEngine {
     }));
   }
 
-  static async getCategoryAccuracy(userId: string) {
-    const analytics = await this.getUserAnalytics(userId);
+  static async getCategoryAccuracy(userId: string, db: Prisma.TransactionClient = prisma) {
+    const analytics = await this.getUserAnalytics(userId, db);
     return analytics.map(a => ({
       category: a.category,
       accuracy: a.accuracy,

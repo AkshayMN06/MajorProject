@@ -1,10 +1,11 @@
 import { Router, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authenticate, AuthRequest } from '../middleware/auth';
+import { authorizeSessionAccess } from '../middleware/sessionAccess';
 import { validate } from '../middleware/validate';
 import { createSessionSchema, createSoloSessionSchema, joinSessionSchema, readySchema } from '../validation/sessionSchemas';
 import { getIO } from '../socket';
-import { markReady, loadNextScenario } from '../services/sessionActions';
+import { markReady, loadNextScenario, getRoomState } from '../services/sessionActions';
 import { buildAssessmentReport } from '../services/reportBuilder';
 import { transition, SessionState } from '../services/stateMachine';
 import { buildInterleavedScenarioSet } from '../services/interleavedScenarios';
@@ -13,6 +14,33 @@ const prisma = new PrismaClient();
 const router = Router();
 
 router.use(authenticate);
+
+// Participants are exposed as id + name only — never credential hashes or
+// account-security metadata.
+const participantSelect = { select: { id: true, name: true } } as const;
+
+// Client-safe session scalars. Deliberately omits scenarioIds (the upcoming
+// round plan), roundState (persisted in-flight round, incl. the attacker's
+// pending choice) and completionArtifactsAt (internal bookkeeping).
+const safeSessionSelect = {
+  id: true,
+  sessionCode: true,
+  attackerId: true,
+  defenderId: true,
+  status: true,
+  mode: true,
+  soloRole: true,
+  difficulty: true,
+  module: true,
+  currentScenarioIndex: true,
+  totalScenarios: true,
+  attackerReady: true,
+  defenderReady: true,
+  attackerScore: true,
+  defenderScore: true,
+  createdAt: true,
+  completedAt: true,
+} as const;
 
 // Generate human-readable session code like CYB-7428
 const generateSessionCode = async (): Promise<string> => {
@@ -165,7 +193,6 @@ router.post('/join', validate(joinSessionSchema), async (req: AuthRequest, res: 
 
     const session = await prisma.session.findUnique({
       where: { sessionCode: sessionCode.toUpperCase() },
-      include: { attacker: true },
     });
 
     if (!session) return res.status(404).json({ success: false, error: 'Session not found. Check the code and try again.' });
@@ -181,10 +208,19 @@ router.post('/join', validate(joinSessionSchema), async (req: AuthRequest, res: 
 
     const nextStatus = transition(session.status, SessionState.SESSION_READY);
 
-    const updated = await prisma.session.update({
-      where: { id: session.id },
+    // Conditional claim: of any number of concurrent joins, only the one
+    // whose write still sees an empty defender slot succeeds.
+    const claimed = await prisma.session.updateMany({
+      where: { id: session.id, status: SessionState.WAITING_FOR_PARTICIPANT, defenderId: null },
       data: { defenderId: req.user.id, status: nextStatus },
-      include: { attacker: true, defender: true },
+    });
+    if (!claimed.count) {
+      return res.status(400).json({ success: false, error: 'This session already has a defender.' });
+    }
+
+    const updated = await prisma.session.findUniqueOrThrow({
+      where: { id: session.id },
+      include: { attacker: participantSelect, defender: participantSelect },
     });
 
     try {
@@ -234,26 +270,48 @@ router.post('/ready', validate(readySchema), async (req: AuthRequest, res: Respo
   }
 });
 
+// In SOLO mode attackerId === defenderId, so identity can't tell the roles
+// apart — use soloRole, as the socket's joinSession does.
+function roleOf(session: { mode: string; soloRole: string | null; attackerId: string }, userId: string) {
+  if (session.mode === 'SOLO') return session.soloRole === 'DEFENDER' ? 'defender' : 'attacker';
+  return session.attackerId === userId ? 'attacker' : 'defender';
+}
+
+// Statuses a hard-refreshed client can resume. Pre-play states need nothing
+// persisted; mid-round states are only resumable when the persisted round
+// (Session.roundState) exists, because the socket's joinSession replays the
+// scenario/attack/result from it. Legacy rows without it, and transient
+// RULE_PROCESSING/NEXT_ROUND rows, are not offered.
+const PRE_PLAY_STATUSES: string[] = [SessionState.WAITING_FOR_PARTICIPANT, SessionState.SESSION_READY];
+const MID_ROUND_STATUSES: string[] = [SessionState.ATTACK_SELECTION, SessionState.DEFENSE_SELECTION, SessionState.RESULT_GENERATED];
+
 // GET /api/sessions/resumable
-// Rehydrates a hard-refreshed client for the two windows a Pre-Test or
-// Post-Test can occupy: `activeSession` covers the pre-round-play window
-// (WAITING_FOR_PARTICIPANT/SESSION_READY — where the Pre-Test gate lives),
-// and `pendingPostTestSession` covers a completed assessment whose Post-Test
-// this user hasn't finished yet. Scoped deliberately to just these two
-// windows — full mid-round (attack/defense-selection) resume is a
-// pre-existing, separate gap this endpoint does not address.
+// Rehydrates a hard-refreshed client: `activeSession` is the caller's most
+// recent unfinished session (pre-play or recoverable mid-round), and
+// `pendingPostTestSession` is a completed assessment whose Post-Test this
+// user hasn't finished yet. Only safe metadata is returned — round content
+// is delivered by the socket's participant-checked joinSession replay.
 router.get('/resumable', async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user.id;
 
-    const activeSession = await prisma.session.findFirst({
+    const candidates = await prisma.session.findMany({
       where: {
         OR: [{ attackerId: userId }, { defenderId: userId }],
-        status: { in: [SessionState.WAITING_FOR_PARTICIPANT, SessionState.SESSION_READY] },
+        status: { in: [...PRE_PLAY_STATUSES, ...MID_ROUND_STATUSES] },
       },
       orderBy: { createdAt: 'desc' },
-      include: { attacker: true, defender: true },
+      take: 5,
+      select: {
+        ...safeSessionSelect,
+        roundState: true, // read for the recoverability check only, never returned
+        attacker: participantSelect,
+        defender: participantSelect,
+      },
     });
+    const activeSession = candidates.find(
+      (s) => PRE_PLAY_STATUSES.includes(s.status) || getRoomState(s.roundState) !== null
+    );
 
     let pendingPostTestSession = null;
     const completedSessions = await prisma.session.findMany({
@@ -282,18 +340,22 @@ router.get('/resumable', async (req: AuthRequest, res: Response) => {
               sessionId: activeSession.id,
               sessionCode: activeSession.sessionCode,
               status: activeSession.status,
+              mode: activeSession.mode,
               difficulty: activeSession.difficulty,
               module: activeSession.module,
               totalScenarios: activeSession.totalScenarios,
+              currentRound: activeSession.currentScenarioIndex + 1,
+              attackerScore: activeSession.attackerScore,
+              defenderScore: activeSession.defenderScore,
               attackerName: activeSession.attacker.name,
               defenderName: activeSession.defender?.name ?? null,
-              role: activeSession.attackerId === userId ? 'attacker' : 'defender',
+              role: roleOf(activeSession, userId),
             }
           : null,
         pendingPostTestSession: pendingPostTestSession
           ? {
               sessionId: pendingPostTestSession.id,
-              role: pendingPostTestSession.attackerId === userId ? 'attacker' : 'defender',
+              role: roleOf(pendingPostTestSession, userId),
             }
           : null,
       },
@@ -311,6 +373,7 @@ router.get('/active', async (req: AuthRequest, res: Response) => {
         OR: [{ attackerId: req.user.id }, { defenderId: req.user.id }],
         status: { not: SessionState.ASSESSMENT_COMPLETE },
       },
+      select: safeSessionSelect,
     });
     res.json({ success: true, data: sessions });
   } catch (err: any) {
@@ -321,9 +384,16 @@ router.get('/active', async (req: AuthRequest, res: Response) => {
 // GET /api/sessions/:id
 router.get('/:id', async (req: AuthRequest, res: Response) => {
   try {
+    const sessionId = String(req.params.id);
+    if (!(await authorizeSessionAccess(req, res, sessionId))) return;
     const session = await prisma.session.findUnique({
-      where: { id: String(req.params.id) },
-      include: { attacker: true, defender: true, events: true },
+      where: { id: sessionId },
+      select: {
+        ...safeSessionSelect,
+        attacker: participantSelect,
+        defender: participantSelect,
+        events: true,
+      },
     });
     if (!session) return res.status(404).json({ success: false, error: 'Session not found' });
     res.json({ success: true, data: session });
@@ -335,6 +405,7 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
 // GET /api/sessions/:id/report — alias of GET /api/assessment-report/:sessionId
 router.get('/:id/report', async (req: AuthRequest, res: Response) => {
   try {
+    if (!(await authorizeSessionAccess(req, res, String(req.params.id)))) return;
     const report = await buildAssessmentReport(String(req.params.id));
     if (!report) return res.status(404).json({ success: false, error: 'Session not found' });
     res.json({ success: true, data: report });

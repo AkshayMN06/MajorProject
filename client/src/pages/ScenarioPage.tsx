@@ -35,6 +35,37 @@ const ErrorToast: React.FC<{ message: string; onDismiss: () => void }> = ({ mess
   </motion.div>
 );
 
+// ─── Resume failure ────────────────────────────────────────────────────────────
+// Shown instead of the resume spinner when the replay is rejected, the socket
+// can't connect, or nothing arrives in time. "Back to start" only resets this
+// page — the saved session is untouched and is offered again on next visit.
+const ResumeFailed: React.FC<{ message: string; onRetry: () => void; onLeave: () => void }> = ({ message, onRetry, onLeave }) => (
+  <div className="min-h-screen bg-cyber-bg-dark flex items-center justify-center p-4">
+    <div role="alert" className="bg-[#0f1629] border border-[#1e293b] rounded-2xl p-7 w-full max-w-md shadow-2xl text-center">
+      <div className="w-11 h-11 mx-auto mb-4 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+        <AlertCircle size={20} className="text-red-400" />
+      </div>
+      <h2 className="text-lg font-bold text-white mb-2">We couldn&apos;t resume your session</h2>
+      <p className="text-sm text-gray-400 mb-1">{message}</p>
+      <p className="text-xs text-gray-500 mb-6">Your progress is saved. Try again now, or come back to it later.</p>
+      <div className="flex gap-3 justify-center">
+        <button
+          onClick={onRetry}
+          className="px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"
+        >
+          Try again
+        </button>
+        <button
+          onClick={onLeave}
+          className="px-5 py-2.5 rounded-lg border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500 text-sm font-medium transition-colors"
+        >
+          Back to start
+        </button>
+      </div>
+    </div>
+  </div>
+);
+
 // ─── ScenarioPage ──────────────────────────────────────────────────────────────
 export const ScenarioPage: React.FC = () => {
   const {
@@ -43,6 +74,7 @@ export const ScenarioPage: React.FC = () => {
     createSoloSession,
     joinSession,
     rehydrateActiveSession,
+    retryResume,
     markReady,
     submitAttack,
     submitDefense,
@@ -59,8 +91,9 @@ export const ScenarioPage: React.FC = () => {
   const { phase, role, scenario } = state;
 
   // ── Resume check: once on mount, before the landing screen shows, so a
-  // hard refresh during the Pre-Test/Post-Test window rehydrates the live
-  // session/report instead of dropping the user back at a bare landing page.
+  // hard refresh (waiting room, mid-round, or pending Post-Test) rehydrates
+  // the live session/report instead of dropping the user back at a bare
+  // landing page.
   const [resumeStatus, setResumeStatus] = useState<'checking' | 'done'>('checking');
   useEffect(() => {
     let cancelled = false;
@@ -162,6 +195,11 @@ export const ScenarioPage: React.FC = () => {
           />
         );
 
+      // ── Resuming a mid-round session after a hard refresh ─────────────────
+      case 'resuming':
+        if (!state.resumeError) return <CenteredSpinner />;
+        return <ResumeFailed message={state.resumeError} onRetry={retryResume} onLeave={reset} />;
+
       // ── Waiting For Participant / Waiting Room ────────────────────────────
       case 'waiting_for_participant':
       case 'waiting_room':
@@ -187,6 +225,7 @@ export const ScenarioPage: React.FC = () => {
         return (
           <AttackerView
             scenario={scenario}
+            mode={state.mode}
             currentRound={state.currentRound}
             totalRounds={state.totalRounds}
             attackerScore={state.attackerScore}
@@ -204,6 +243,7 @@ export const ScenarioPage: React.FC = () => {
           return (
             <AttackerView
               scenario={scenario}
+              mode={state.mode}
               currentRound={state.currentRound}
               totalRounds={state.totalRounds}
               attackerScore={state.attackerScore}
@@ -218,6 +258,7 @@ export const ScenarioPage: React.FC = () => {
         return (
           <DefenderView
             scenario={scenario}
+            mode={state.mode}
             currentRound={state.currentRound}
             totalRounds={state.totalRounds}
             attackerScore={state.attackerScore}
@@ -236,6 +277,7 @@ export const ScenarioPage: React.FC = () => {
           return (
             <DefenderView
               scenario={scenario}
+              mode={state.mode}
               currentRound={state.currentRound}
               totalRounds={state.totalRounds}
               attackerScore={state.attackerScore}
@@ -257,6 +299,7 @@ export const ScenarioPage: React.FC = () => {
           return (
             <DefenderView
               scenario={scenario}
+              mode={state.mode}
               currentRound={state.currentRound}
               totalRounds={state.totalRounds}
               attackerScore={state.attackerScore}
@@ -276,6 +319,7 @@ export const ScenarioPage: React.FC = () => {
         return (
           <ResultPanel
             result={state.roundResult}
+            mode={state.mode}
             role={role}
             onContinue={continueToNextRound}
           />

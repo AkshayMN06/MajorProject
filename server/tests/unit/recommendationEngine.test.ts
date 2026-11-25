@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   mockFindMany: vi.fn(),
   mockCreate: vi.fn(),
   mockUpdate: vi.fn(),
+  mockUpdateMany: vi.fn(),
   mockModuleFindMany: vi.fn(),
   mockGetCategoryAccuracy: vi.fn(),
   mockGetAnalyticsSummary: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock('@prisma/client', () => {
       findMany: mocks.mockFindMany,
       create: mocks.mockCreate,
       update: mocks.mockUpdate,
+      updateMany: mocks.mockUpdateMany,
     },
     module: {
       findMany: mocks.mockModuleFindMany,
@@ -35,13 +37,58 @@ import { RecommendationEngine } from '../../src/services/recommendationEngine';
 describe('RecommendationEngine', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Category -> module lookup for Recommendation.moduleId — none of these
-    // tests assert on moduleId, so an empty module list (leaving it unset)
-    // is a safe default throughout.
     mocks.mockModuleFindMany.mockResolvedValue([]);
   });
 
   describe('generateRecommendations', () => {
+    it('links recommendations to the intended tier and supports a legacy Medium-only category', async () => {
+      mocks.mockGetCategoryAccuracy.mockResolvedValue([
+        { category: 'Cryptography', accuracy: 40 },
+        { category: 'Web Security', accuracy: 60 },
+        { category: 'Network Security', accuracy: 40 },
+      ]);
+      mocks.mockGetAnalyticsSummary.mockResolvedValue({ averageResponseTime: 30 });
+      mocks.mockFindMany.mockResolvedValue([]);
+      mocks.mockModuleFindMany.mockResolvedValue([
+        { category: 'System Security', difficulty: 'Easy', id: 'system-easy' },
+        { category: 'Cryptography', difficulty: 'Hard', id: 'crypto-hard' },
+        { category: 'Cryptography', difficulty: 'Easy', id: 'crypto-easy' },
+        { category: 'Cryptography', difficulty: 'Medium', id: 'crypto-medium' },
+        { category: 'Web Security', difficulty: 'Medium', id: 'web-medium' },
+        { category: 'Web Security', difficulty: 'Easy', id: 'web-easy' },
+        { category: 'Network Security', difficulty: 'Medium', id: 'network-medium' },
+      ]);
+
+      await RecommendationEngine.generateRecommendations('u1');
+
+      const links = new Map(mocks.mockCreate.mock.calls.map(([{ data }]) => [data.title, data.moduleId]));
+      expect(links.get('Beginner Module: Cryptography')).toBe('crypto-easy');
+      expect(links.get('Intermediate Module: Web Security')).toBe('web-medium');
+      expect(links.get('Beginner Module: Network Security')).toBe('network-medium');
+      expect(links.get('Intro to System Security')).toBe('system-easy');
+    });
+
+    it('repairs an existing open recommendation link without creating a duplicate', async () => {
+      mocks.mockGetCategoryAccuracy.mockResolvedValue([{ category: 'Cryptography', accuracy: 40 }]);
+      mocks.mockGetAnalyticsSummary.mockResolvedValue({ averageResponseTime: 30 });
+      mocks.mockFindMany.mockResolvedValue([
+        { id: 'r1', title: 'Beginner Module: Cryptography', moduleId: 'crypto-hard' },
+      ]);
+      mocks.mockModuleFindMany.mockResolvedValue([
+        { category: 'Cryptography', difficulty: 'Easy', id: 'crypto-easy' },
+      ]);
+
+      await RecommendationEngine.generateRecommendations('u1');
+
+      expect(mocks.mockUpdateMany).toHaveBeenCalledWith({
+        where: { id: 'r1', userId: 'u1', isCompleted: false, moduleId: 'crypto-hard' },
+        data: { moduleId: 'crypto-easy' },
+      });
+      expect(mocks.mockCreate).not.toHaveBeenCalledWith({
+        data: expect.objectContaining({ title: 'Beginner Module: Cryptography' }),
+      });
+    });
+
     it('creates beginner module recommendation when accuracy < 50', async () => {
       mocks.mockGetCategoryAccuracy.mockResolvedValue([{ category: 'Cryptography', accuracy: 40 }]);
       mocks.mockGetAnalyticsSummary.mockResolvedValue({ averageResponseTime: 30 });
@@ -166,10 +213,10 @@ describe('RecommendationEngine', () => {
   describe('markCompleted', () => {
     it('calls prisma.recommendation.update with isCompleted: true', async () => {
       mocks.mockUpdate.mockResolvedValue({});
-      await RecommendationEngine.markCompleted('r1');
+      await RecommendationEngine.markCompleted('r1', 'user-1');
 
       expect(mocks.mockUpdate).toHaveBeenCalledWith({
-        where: { id: 'r1' },
+        where: { id: 'r1', userId: 'user-1' },
         data: { isCompleted: true }
       });
     });

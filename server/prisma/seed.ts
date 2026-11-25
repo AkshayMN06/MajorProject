@@ -37,6 +37,7 @@ async function main() {
     const module = await prisma.module.create({
       data: {
         name: m.name,
+        activeTitleKey: m.name.replace(/^ +| +$/g, '').replace(/[A-Z]/g, (c) => c.toLowerCase()), // = SQLite lower(trim(name)), as in module management
         description: m.description,
         category: m.category,
         difficulty: m.difficulty,

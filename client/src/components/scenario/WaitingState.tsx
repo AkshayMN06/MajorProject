@@ -2,6 +2,7 @@ import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Users, CheckCircle, Circle, Shield, Target, Copy, Check, Loader2, BookOpen } from 'lucide-react';
 import { useState } from 'react';
+import { ModeBadge } from './ScenarioShared';
 
 interface WaitingRoomProps {
   role: 'attacker' | 'defender';
@@ -67,8 +68,9 @@ const WaitingRoom: React.FC<WaitingRoomProps> = ({
                 <Users size={18} className="text-blue-400" />
               </div>
               <div>
-                <h2 className="text-lg font-bold text-white">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
                   {waitingForParticipant ? 'Waiting for Defender' : 'Assessment Lobby'}
+                  <ModeBadge mode="collaborative" />
                 </h2>
                 <p className="text-xs text-gray-500">
                   {waitingForParticipant

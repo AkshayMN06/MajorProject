@@ -1,9 +1,10 @@
 import { Router, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authenticate, AuthRequest } from '../middleware/auth';
+import { authorizeSessionAccess } from '../middleware/sessionAccess';
 import { validate } from '../middleware/validate';
 import { attackSchema, defenseSchema, roundResultQuerySchema } from '../validation/sessionSchemas';
-import { getIO } from '../socket';
+import { getIO, broadcastAttackResult } from '../socket';
 import { submitAttack, submitDefense } from '../services/sessionActions';
 import { buildAssessmentReport } from '../services/reportBuilder';
 
@@ -21,7 +22,7 @@ router.post('/attack', validate(attackSchema), async (req: AuthRequest, res: Res
     const result = await submitAttack(sessionId, req.user.id, attackOptionId);
 
     const io = getIO();
-    if (io) io.to(sessionId).emit('attackSubmitted', result);
+    if (io) broadcastAttackResult(io, sessionId, result);
 
     res.json({ success: true, data: result });
   } catch (err: any) {
@@ -56,6 +57,7 @@ router.post('/defense', validate(defenseSchema), async (req: AuthRequest, res: R
 router.get('/round-result', validate(roundResultQuerySchema), async (req: AuthRequest, res: Response) => {
   try {
     const sessionId = String(req.query.sessionId);
+    if (!(await authorizeSessionAccess(req, res, sessionId))) return;
     const lastEvent = await prisma.event.findFirst({
       where: { sessionId },
       orderBy: { turnId: 'desc' },
@@ -90,6 +92,7 @@ router.get('/round-result', validate(roundResultQuerySchema), async (req: AuthRe
 // GET /api/assessment-report/:sessionId
 router.get('/assessment-report/:sessionId', async (req: AuthRequest, res: Response) => {
   try {
+    if (!(await authorizeSessionAccess(req, res, String(req.params.sessionId)))) return;
     const report = await buildAssessmentReport(String(req.params.sessionId));
     if (!report) return res.status(404).json({ success: false, error: 'Session not found' });
     res.json({ success: true, data: report });

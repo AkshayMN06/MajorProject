@@ -127,7 +127,7 @@ const DeleteModal: React.FC<DeleteModalProps> = ({ onConfirm, onCancel, isLoadin
 export const SettingsPage: React.FC = () => {
   usePageTitle('Settings');
   const navigate = useNavigate();
-  const { logout, changePassword, deleteAccount, isLoading } = useAuthStore();
+  const { logout, changePassword, deleteAccount } = useAuthStore();
 
   // Password form state
   const [showPassword, setShowPassword] = useState(false);

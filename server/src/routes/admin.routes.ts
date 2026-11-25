@@ -109,9 +109,10 @@ router.get('/users', validate(adminUsersQuerySchema), async (req: AuthRequest, r
     const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
     const { sortBy, sortOrder } = parseUserSort(req);
 
-    // Prisma's SQLite connector doesn't support `mode: 'insensitive'`; SQLite's
-    // own LIKE (which `contains` compiles to) is already ASCII-case-insensitive.
-    const where = search ? { OR: [{ name: { contains: search } }, { email: { contains: search } }] } : undefined;
+    // Postgres LIKE is case-sensitive, so ask for ILIKE explicitly.
+    const where = search
+      ? { OR: [{ name: { contains: search, mode: 'insensitive' as const } }, { email: { contains: search, mode: 'insensitive' as const } }] }
+      : undefined;
     const orderBy = sortBy === 'quizAttemptCount' ? { quizAttempts: { _count: sortOrder } } : { [sortBy]: sortOrder };
 
     const [users, total] = await Promise.all([

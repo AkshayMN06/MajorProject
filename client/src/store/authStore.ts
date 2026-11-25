@@ -15,7 +15,7 @@ export interface User {
   location?: string;
   preferredRole?: string;
   timezone?: string;
-  role?: string; // 'USER' | 'ADMIN'
+  role?: string; // 'USER' | 'TEACHER' | 'ADMIN'
   createdAt: string;
 }
 
@@ -47,7 +47,7 @@ interface AuthState {
   deleteAccount: (password: string) => Promise<void>;
 }
 
-export const useAuthStore = create<AuthState>((set, get) => ({
+export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   token: localStorage.getItem('cyberlearn_token'),
   isAuthenticated: !!localStorage.getItem('cyberlearn_token'),
@@ -98,7 +98,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const user = await authApi.getMe();
       set({ user, isAuthenticated: true, isLoading: false });
-    } catch (err: any) {
+    } catch {
       localStorage.removeItem('cyberlearn_token');
       set({ user: null, token: null, isAuthenticated: false, error: null, isLoading: false });
     }

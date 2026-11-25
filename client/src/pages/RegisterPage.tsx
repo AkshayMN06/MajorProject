@@ -49,7 +49,7 @@ export const RegisterPage: React.FC = () => {
         semester: Number(formData.semester)
       });
       navigate('/');
-    } catch (err) {
+    } catch {
       // Error handled by store
     }
   };

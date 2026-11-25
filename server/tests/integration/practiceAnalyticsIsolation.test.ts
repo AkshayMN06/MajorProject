@@ -9,12 +9,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // against it, then every analytics-adjacent delegate is asserted to have
 // zero calls.
 const mocks = vi.hoisted(() => ({
+  $transaction: vi.fn(),
   scenario: { findMany: vi.fn() },
   caseStudy: { findMany: vi.fn() },
   practiceQuestionPool: { findMany: vi.fn() },
   practiceQuestion: { findMany: vi.fn() },
-  practiceSession: { create: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-  practiceResponse: { createMany: vi.fn() },
+  practiceSession: { create: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn() },
+  practiceResponse: { createMany: vi.fn(), deleteMany: vi.fn() },
   // Analytics-adjacent tables — must stay untouched by Practice Labs.
   score: { create: vi.fn(), findMany: vi.fn(), update: vi.fn() },
   analytics: { create: vi.fn(), update: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
@@ -51,6 +52,7 @@ const ANALYTICS_ADJACENT = ['score', 'analytics', 'assessmentSnapshot', 'attempt
 describe('Practice Labs analytics isolation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.$transaction.mockImplementation((write) => write(mocks));
   });
 
   it('a full start -> submit practice session (case study + pool selection included) never calls any analytics-adjacent Prisma delegate', async () => {
@@ -79,7 +81,7 @@ describe('Practice Labs analytics isolation', () => {
       totalQuestions: 8,
     });
     mocks.practiceResponse.createMany.mockResolvedValue({ count: 8 });
-    mocks.practiceSession.update.mockResolvedValue({});
+    mocks.practiceSession.updateMany.mockResolvedValue({ count: 1 });
 
     const responses = started.questions.map((q) => ({ questionId: q.id, selectedOption: 'A' as const }));
     const result = await submitSession('session-1', 'user-1', responses);
@@ -98,6 +100,6 @@ describe('Practice Labs analytics isolation', () => {
     expect(mocks.practiceQuestionPool.findMany).toHaveBeenCalled();
     expect(mocks.practiceSession.create).toHaveBeenCalled();
     expect(mocks.practiceResponse.createMany).toHaveBeenCalled();
-    expect(mocks.practiceSession.update).toHaveBeenCalled();
+    expect(mocks.practiceSession.updateMany).toHaveBeenCalled();
   });
 });

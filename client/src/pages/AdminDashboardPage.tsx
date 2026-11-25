@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Users, ClipboardCheck, TrendingUp, TrendingDown, Minus, Download,
-  Search, Loader2, AlertTriangle, ShieldCheck, Filter, X, ArrowUp, ArrowDown, ArrowUpDown, Trash2,
+  Search, Loader2, AlertTriangle, ShieldCheck, Filter, X, ArrowUp, ArrowDown, ArrowUpDown, Trash2, Library,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { adminApi } from '../services/api';
 import type { AdminStats, AdminOverallStats, AdminImprovementRow, AdminCategoryAggregate, AdminUser, AdminAnalyticsFilters } from '../services/api';
@@ -226,8 +227,13 @@ export const AdminDashboardPage: React.FC = () => {
             <p className="text-sm text-gray-400 mt-0.5">User participation & Pre-Test/Post-Test improvement analytics</p>
           </div>
         </div>
-        <div className="text-sm text-gray-400">
-          Signed in as <span className="text-white font-semibold">{user?.name}</span>
+        <div className="flex items-center gap-4">
+          <Link to="/admin/modules" className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors">
+            <Library size={16} /> Module Management
+          </Link>
+          <div className="text-sm text-gray-400">
+            Signed in as <span className="text-white font-semibold">{user?.name}</span>
+          </div>
         </div>
       </div>
 

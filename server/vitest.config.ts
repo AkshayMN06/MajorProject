@@ -1,4 +1,8 @@
 import { defineConfig } from 'vitest/config';
+import dotenv from 'dotenv';
+
+// Loads TEST_DATABASE_URL (and anything else local) from server/.env.
+dotenv.config();
 
 export default defineConfig({
   test: {

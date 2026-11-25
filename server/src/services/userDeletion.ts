@@ -46,6 +46,10 @@ export function buildUserDeletionOps(prisma: PrismaClient, userId: string): Pris
     // Account-level rows with a direct, non-session FK to the user.
     prisma.recommendation.deleteMany({ where: { userId } }),
     prisma.analytics.deleteMany({ where: { userId } }),
+    prisma.lessonProgress.deleteMany({ where: { userId } }),
+    prisma.passwordResetToken.deleteMany({ where: { userId } }),
+    // SecurityEvent.userId is ON DELETE SET NULL: the audit row (with its
+    // email snapshot) is retained, detached from the deleted account.
     prisma.user.delete({ where: { id: userId } }),
   ];
 }

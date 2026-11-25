@@ -7,7 +7,8 @@ const mocks = vi.hoisted(() => ({
   event: { count: vi.fn(), create: vi.fn() },
   attempt: { create: vi.fn(), findMany: vi.fn(), count: vi.fn() },
   score: { create: vi.fn() },
-  analytics: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
+  analytics: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), findUniqueOrThrow: vi.fn() },
+  $executeRaw: vi.fn(),
 }));
 
 vi.mock('@prisma/client', () => ({
@@ -63,7 +64,7 @@ describe('Scenario Flow Integration Tests', () => {
     expect(result.explanation).toMatch(/^Outcome: Defended\./);
     expect(mocks.event.create).toHaveBeenCalledTimes(1);
     expect(mocks.attempt.create).toHaveBeenCalledTimes(2);
-    expect(mocks.analytics.create).toHaveBeenCalledTimes(2);
+    expect(mocks.$executeRaw).toHaveBeenCalledTimes(2); // one atomic analytics upsert per participant
   });
 
   it('Full breached flow', async () => {

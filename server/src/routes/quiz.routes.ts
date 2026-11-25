@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { validate } from '../middleware/validate';
-import { getOrStartAttempt, getAttemptQuestions } from '../services/quizEngine';
+import { getOrStartAttempt, getAttemptQuestions, submitAttempt } from '../services/quizEngine';
 import {
   quizQuestionsQuerySchema,
   quizStartSchema,
@@ -121,46 +121,12 @@ router.post('/start', validate(quizStartSchema), async (req: AuthRequest, res: R
 });
 
 // POST /api/quiz/submit
-// The server computes the score from each question's stored correctOption
-// — the client only ever sends which option the learner selected, never a
-// score or correctness flag. This is the sole place scoring happens.
+// Score only server-assigned questions and atomically record completion.
 router.post('/submit', validate(quizSubmitSchema), async (req: AuthRequest, res: Response) => {
   try {
     const { attemptId, responses } = req.body;
-
-    const attempt = await prisma.quizAttempt.findUnique({ where: { id: attemptId } });
-    if (!attempt) return res.status(404).json({ success: false, error: 'Attempt not found' });
-    if (attempt.userId !== req.user.id) return res.status(403).json({ success: false, error: 'Forbidden' });
-    if (attempt.status === 'completed') {
-      return res.status(400).json({ success: false, error: 'This attempt was already submitted' });
-    }
-
-    const questionIds = responses.map((r: { questionId: string }) => r.questionId);
-    const questions = await prisma.question.findMany({ where: { id: { in: questionIds } } });
-    const questionById = new Map(questions.map((q) => [q.id, q]));
-
-    let score = 0;
-    const responseRows = [];
-    for (const r of responses as { questionId: string; selectedOption: string }[]) {
-      const question = questionById.get(r.questionId);
-      if (!question) continue; // ignore unknown/stale question ids rather than failing the whole submission
-      const isCorrect = question.correctOption === r.selectedOption;
-      if (isCorrect) score++;
-      responseRows.push({
-        attemptId,
-        questionId: r.questionId,
-        selectedOption: r.selectedOption,
-        isCorrect,
-      });
-    }
-
-    await prisma.quizResponse.createMany({ data: responseRows });
-    await prisma.quizAttempt.update({
-      where: { id: attemptId },
-      data: { status: 'completed', score, completedAt: new Date() },
-    });
-
-    res.json({ success: true, data: { attemptId, score, totalQuestions: attempt.totalQuestions } });
+    const data = await submitAttempt(attemptId, req.user.id, responses);
+    res.json({ success: true, data });
   } catch (err: any) {
     handleError(res, err);
   }
