@@ -20,13 +20,27 @@ process.env.DATABASE_URL = databaseUrl;
 // runtime URL where they are the same (local development, tests).
 process.env.DIRECT_URL = process.env.DIRECT_URL || databaseUrl;
 
+export function parseOrigins(value: string): (string | RegExp)[] {
+  return value.split(',').map((o) => o.trim()).filter(Boolean).map((o) =>
+    o.includes('*')
+      ? new RegExp('^' + o.split('*').map(escapeRegExp).join('[a-z0-9-]+') + '$')
+      : o
+  );
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export const env = {
   PORT: process.env.PORT ? parseInt(process.env.PORT, 10) : 3001,
   DATABASE_URL: databaseUrl,
   JWT_SECRET: configuredJwtSecret || developmentJwtSecret,
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
-  // Allowed browser origins, comma-separated (e.g. the client's preview alias).
-  CORS_ORIGIN: (process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map((o) => o.trim()).filter(Boolean),
+  // Allowed browser origins, comma-separated. A `*` matches one or more
+  // letters, digits or hyphens — e.g. every preview of one Vercel project:
+  // https://cyberlearn-web-*-major-project-5fef.vercel.app
+  CORS_ORIGIN: parseOrigins(process.env.CORS_ORIGIN || 'http://localhost:5173'),
   // Shared Socket.IO state across server instances (Vercel): a PostgreSQL
   // connection that supports LISTEN/NOTIFY (Supabase session pooler or direct).
   // Unset locally, where one process holds every connection.

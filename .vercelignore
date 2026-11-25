@@ -1,0 +1,12 @@
+# Never upload local secrets, data or build output to Vercel.
+**/.env
+**/.env.*
+!**/.env.example
+**/*.db
+**/*.db-*
+**/node_modules
+**/dist
+server/storage
+agent_collaboration
+.claude
+.vercel

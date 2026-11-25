@@ -28,3 +28,6 @@ server/student-report.pdf
 
 # Uploaded module learning materials (private, per-environment)
 server/storage/
+
+# Vercel CLI project links
+.vercel
