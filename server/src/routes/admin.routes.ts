@@ -185,6 +185,40 @@ router.delete('/users/:id', async (req: AuthRequest, res: Response) => {
   }
 });
 
+// Teacher access requests: someone ticked "I'm a teacher" at signup. They stay
+// USER until an admin approves (-> TEACHER) or rejects (stays USER).
+router.get('/teacher-requests', async (_req: AuthRequest, res: Response) => {
+  try {
+    const requests = await prisma.user.findMany({
+      where: { role: 'USER', teacherRequestedAt: { not: null } },
+      select: { id: true, name: true, email: true, college: true, department: true, teacherRequestedAt: true },
+      orderBy: { teacherRequestedAt: 'asc' },
+    });
+    res.json({ success: true, data: requests });
+  } catch (err: any) {
+    handleError(res, err);
+  }
+});
+
+router.post('/teacher-requests/:id/:decision', async (req: AuthRequest, res: Response) => {
+  try {
+    const decision = String(req.params.decision);
+    if (decision !== 'approve' && decision !== 'reject') {
+      return res.status(404).json({ success: false, error: 'Not found' });
+    }
+    // Conditional update: only a still-pending USER request can change, so a
+    // double click or a second admin can't act on it twice.
+    const { count } = await prisma.user.updateMany({
+      where: { id: String(req.params.id), role: 'USER', teacherRequestedAt: { not: null } },
+      data: { teacherRequestedAt: null, ...(decision === 'approve' ? { role: 'TEACHER' } : {}) },
+    });
+    if (count === 0) return res.status(404).json({ success: false, error: 'No pending teacher request for this user.' });
+    res.json({ success: true, data: { id: String(req.params.id), role: decision === 'approve' ? 'TEACHER' : 'USER' } });
+  } catch (err: any) {
+    handleError(res, err);
+  }
+});
+
 // GET /api/admin/export?module=&difficulty=&startDate=&endDate= — a real
 // .xlsx built from the same fetch + pure functions as /analytics, so the
 // downloaded numbers can never disagree with what the dashboard shows.

@@ -35,7 +35,7 @@ function hashToken(rawToken: string): string {
 
 router.post('/register', authLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password, name, usn, department, semester, college } = req.body;
+    const { email, password, name, usn, department, semester, college, requestTeacher } = req.body;
 
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) {
@@ -45,7 +45,8 @@ router.post('/register', authLimiter, async (req: Request, res: Response) => {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await prisma.user.create({
-      data: { email, password: hashedPassword, name, usn, department, semester, college },
+      // Everyone starts as USER; asking for teacher access only queues it for an admin.
+      data: { email, password: hashedPassword, name, usn, department, semester, college, teacherRequestedAt: requestTeacher === true ? new Date() : null },
     });
 
     const token = jwt.sign({ id: user.id }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN as SignOptions['expiresIn'] });

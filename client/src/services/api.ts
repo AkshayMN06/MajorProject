@@ -531,6 +531,15 @@ export interface AdminUser {
   quizAttemptCount: number;
 }
 
+export interface TeacherRequest {
+  id: string;
+  name: string;
+  email: string;
+  college: string | null;
+  department: string | null;
+  teacherRequestedAt: string;
+}
+
 export interface SecurityEvent {
   id: string;
   userId: string | null;
@@ -554,6 +563,9 @@ export const adminApi = {
     ),
   getUsers: (params: { search?: string; page?: number; pageSize?: number; sortBy?: string; sortOrder?: 'asc' | 'desc' } = {}) =>
     unwrap<{ users: AdminUser[]; total: number; page: number; pageSize: number }>(apiClient.get('/admin/users', { params })),
+  getTeacherRequests: () => unwrap<TeacherRequest[]>(apiClient.get('/admin/teacher-requests')),
+  decideTeacherRequest: (id: string, decision: 'approve' | 'reject') =>
+    unwrap<{ id: string; role: string }>(apiClient.post(`/admin/teacher-requests/${id}/${decision}`)),
   deleteUser: (id: string) => unwrap<{ id: string; email: string; name: string }>(apiClient.delete(`/admin/users/${id}`)),
   // Bypasses unwrap for a raw blob download, matching exportApi's pattern.
   // Overrides the default 10s apiClient timeout — the full export can take

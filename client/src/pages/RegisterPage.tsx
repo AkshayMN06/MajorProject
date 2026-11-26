@@ -21,13 +21,15 @@ export const RegisterPage: React.FC = () => {
     college: '',
     usn: '',
     department: '',
-    semester: ''
+    semester: '',
+    requestTeacher: false
   });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value, type } = e.target;
     setFormData(prev => ({
       ...prev,
-      [e.target.name]: e.target.value
+      [name]: type === 'checkbox' ? (e.target as HTMLInputElement).checked : value
     }));
   };
 
@@ -44,9 +46,10 @@ export const RegisterPage: React.FC = () => {
         email: formData.email,
         password: formData.password,
         college: formData.college,
-        usn: formData.usn,
+        usn: formData.usn || undefined,
         department: formData.department,
-        semester: Number(formData.semester)
+        semester: formData.semester ? Number(formData.semester) : undefined,
+        requestTeacher: formData.requestTeacher
       });
       navigate('/');
     } catch {
@@ -200,7 +203,7 @@ export const RegisterPage: React.FC = () => {
                     onChange={handleChange}
                     placeholder="1XX20XX001"
                     className="w-full bg-gray-900/80 border border-gray-700 rounded-lg py-2.5 pl-10 pr-4 text-white focus:outline-none focus:border-cyber-blue focus:ring-1 focus:ring-cyber-blue transition-all placeholder:text-gray-600"
-                    required
+                    required={!formData.requestTeacher}
                     disabled={isLoading}
                   />
                 </div>
@@ -239,7 +242,7 @@ export const RegisterPage: React.FC = () => {
                     value={formData.semester}
                     onChange={handleChange}
                     className="w-full bg-gray-900/80 border border-gray-700 rounded-lg py-2.5 pl-10 pr-4 text-white focus:outline-none focus:border-cyber-blue focus:ring-1 focus:ring-cyber-blue transition-all appearance-none"
-                    required
+                    required={!formData.requestTeacher}
                     disabled={isLoading}
                   >
                     <option value="" disabled className="text-gray-500">Select Semester</option>
@@ -251,6 +254,21 @@ export const RegisterPage: React.FC = () => {
               </div>
             </div>
           </div>
+
+          <label className="flex items-start gap-3 p-3 rounded-lg border border-gray-700 bg-gray-900/50 cursor-pointer">
+            <input
+              type="checkbox"
+              name="requestTeacher"
+              checked={formData.requestTeacher}
+              onChange={handleChange}
+              disabled={isLoading}
+              className="mt-1 accent-cyan-500"
+            />
+            <span className="text-sm text-gray-300">
+              I'm a teacher — request teacher access
+              <span className="block text-xs text-gray-500 mt-0.5">An admin has to approve it. Until then you can use the app as a student. USN and semester are optional for teachers.</span>
+            </span>
+          </label>
 
           <button 
             type="submit"

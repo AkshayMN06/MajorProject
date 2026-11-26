@@ -2,12 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Users, ClipboardCheck, TrendingUp, TrendingDown, Minus, Download,
-  Search, Loader2, AlertTriangle, ShieldCheck, Filter, X, ArrowUp, ArrowDown, ArrowUpDown, Trash2, Library,
+  Search, Loader2, AlertTriangle, ShieldCheck, Filter, X, ArrowUp, ArrowDown, ArrowUpDown, Trash2, Library, GraduationCap, Check,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { adminApi } from '../services/api';
-import type { AdminStats, AdminOverallStats, AdminImprovementRow, AdminCategoryAggregate, AdminUser, AdminAnalyticsFilters } from '../services/api';
+import type { AdminStats, AdminOverallStats, AdminImprovementRow, AdminCategoryAggregate, AdminUser, AdminAnalyticsFilters, TeacherRequest } from '../services/api';
 
 type SortOrder = 'asc' | 'desc';
 type UserSortField = 'name' | 'email' | 'role' | 'createdAt' | 'quizAttemptCount';
@@ -47,6 +47,7 @@ export const AdminDashboardPage: React.FC = () => {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [usersTotal, setUsersTotal] = useState(0);
   const [usersLoading, setUsersLoading] = useState(true);
+  const [usersVersion, setUsersVersion] = useState(0); // bumped to re-fetch after a role change
   const USERS_PAGE_SIZE = 10;
 
   const [improvementSortBy, setImprovementSortBy] = useState<ImprovementSortField>('completedAt');
@@ -115,7 +116,7 @@ export const AdminDashboardPage: React.FC = () => {
       }
     }, userSearch ? 300 : 0);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [userSearch, userPage, userSortBy, userSortOrder]);
+  }, [userSearch, userPage, userSortBy, userSortOrder, usersVersion]);
 
   const toggleUserSort = (field: UserSortField) => {
     if (userSortBy === field) {
@@ -238,6 +239,8 @@ export const AdminDashboardPage: React.FC = () => {
       </div>
 
       {statsError && <ErrorPill message={statsError} />}
+
+      <TeacherRequestsPanel onDecided={() => setUsersVersion((v) => v + 1)} />
 
       {/* Global summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -475,6 +478,70 @@ export const AdminDashboardPage: React.FC = () => {
           onConfirm={handleDeleteUser}
         />
       )}
+    </div>
+  );
+};
+
+// Pending "I'm a teacher" signups. Hidden when there are none.
+const TeacherRequestsPanel = ({ onDecided }: { onDecided: () => void }) => {
+  const [requests, setRequests] = useState<TeacherRequest[]>([]);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    adminApi.getTeacherRequests().then(setRequests).catch(() => setError('Could not load teacher requests.'));
+  }, []);
+
+  const decide = async (id: string, decision: 'approve' | 'reject') => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await adminApi.decideTeacherRequest(id, decision);
+      setRequests((rs) => rs.filter((r) => r.id !== id));
+      onDecided();
+    } catch (err: any) {
+      setError(err.message || 'Could not update the request.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (requests.length === 0 && !error) return null;
+  return (
+    <div className="glass-card p-6 rounded-xl border border-amber-500/30 bg-amber-500/5">
+      <div className="flex items-center gap-2 mb-4">
+        <GraduationCap size={18} className="text-amber-400" />
+        <h3 className="text-lg font-bold text-white">Teacher Requests <span className="text-gray-500 font-normal text-sm">({requests.length})</span></h3>
+      </div>
+      {error && <div className="mb-3"><ErrorPill message={error} /></div>}
+      <ul className="divide-y divide-white/5">
+        {requests.map((r) => (
+          <li key={r.id} className="py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="text-sm">
+              <div className="font-medium text-gray-200">{r.name} <span className="text-gray-400 font-normal">· {r.email}</span></div>
+              <div className="text-xs text-gray-500">
+                {[r.college, r.department].filter(Boolean).join(' · ') || 'No college given'} · requested {new Date(r.teacherRequestedAt).toLocaleDateString()}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => decide(r.id, 'approve')}
+                disabled={busyId !== null}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-green-600/80 hover:bg-green-600 text-white disabled:opacity-40 transition-colors"
+              >
+                {busyId === r.id ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Approve
+              </button>
+              <button
+                onClick={() => decide(r.id, 'reject')}
+                disabled={busyId !== null}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-gray-300 border border-white/15 hover:bg-white/5 disabled:opacity-40 transition-colors"
+              >
+                <X size={13} /> Reject
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 };

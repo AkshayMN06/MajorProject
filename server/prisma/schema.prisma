@@ -28,6 +28,7 @@ model User {
   preferredRole    String?
   timezone         String?
   role             String    @default("USER") // 'USER' | 'TEACHER' | 'ADMIN' — never placed in the JWT; authenticate() reloads this from the DB on every request, so promotion/demotion takes effect immediately without re-login
+  teacherRequestedAt DateTime? // set when someone asks for teacher access at signup; an admin approves or rejects it
   failedLoginCount Int       @default(0)
   lockedUntil      DateTime?
   createdAt        DateTime  @default(now())
